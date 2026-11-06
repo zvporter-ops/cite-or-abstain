@@ -23,10 +23,12 @@ import json
 import logging
 import os
 import threading
+import time
 from pathlib import Path
 
+from .coa import audit as audit_mod
 from .coa import leakguard
-from .coa.claimgate import SENTENCE, check as gate_check, render_report
+from .coa.claimgate import check as gate_check, render_report
 from .coa.corpus import (
     INTERNAL, PUBLIC, CorpusIndex, normalize_roots, relevance,
 )
@@ -39,11 +41,6 @@ _QUESTION_STARTS = (
     "what", "why", "how", "when", "where", "who", "which", "does", "do", "is",
     "are", "can", "could", "should", "would", "will", "was", "were", "tell me",
     "explain", "summarize", "summarise", "find", "show",
-)
-
-UNANSWERABLE_PROBES = (
-    "What is the best soil mix for growing tomatoes?",
-    "Who won the 1998 FIFA World Cup final?",
 )
 
 _LOCK = threading.RLock()
@@ -136,6 +133,31 @@ def _strictness(session_id: str) -> str:
     return _STRICTNESS.get(session_id) or _cfg().get("strictness", "flag")
 
 
+def _record_gate(session_id: str, report, mode: str, withheld: int = 0) -> None:
+    """Persist the last gate outcome so the desktop pane can show what just happened."""
+    try:
+        payload = {
+            "ts": time.time(),
+            "session_id": session_id,
+            "mode": mode,
+            "withheld_internal": withheld,
+            "ok": report.ok,
+            "coverage_internal": round(report.coverage_internal, 3),
+            "coverage_any": round(report.coverage_any, 3),
+            "internal_passages": report.internal_count,
+            "public_passages": report.public_count,
+            "violations": [{"kind": f.kind, "span": f.span[:120]} for f in report.violations],
+            "public_only": [{"kind": f.kind, "span": f.span[:120]} for f in report.public_only],
+            "soft": sum(1 for f in report.findings if f.severity == "soft"),
+        }
+        path = _data_dir() / "last_gate.json"
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(payload), encoding="utf-8")
+        tmp.replace(path)
+    except Exception as exc:
+        logger.debug("could not record the gate outcome: %s", exc)
+
+
 def _looks_like_question(message: str) -> bool:
     text = (message or "").strip().lower()
     if not text:
@@ -216,6 +238,11 @@ def on_transform_llm_output(response_text: str = "", session_id: str = "", **kwa
             return None
 
         withheld = int(entry.get("internal_withheld") or 0)
+        passages = entry.get("passages") or []
+        report = gate_check(response_text, passages,
+                            allow_public=bool(entry.get("allow_public")))
+        _record_gate(session_id, report, mode, withheld)
+
         if withheld and mode == "strict":
             return (
                 "I can't answer that here. Internal material matches this question, and "
@@ -223,10 +250,6 @@ def on_transform_llm_output(response_text: str = "", session_id: str = "", **kwa
                 "rather than sent to a remote provider. Use `corpus_ask`, which answers "
                 "it against the local endpoint."
             )
-
-        passages = entry.get("passages") or []
-        report = gate_check(response_text, passages,
-                            allow_public=bool(entry.get("allow_public")))
 
         if mode == "strict" and not report.ok:
             kinds = sorted({f.kind for f in report.violations})
@@ -288,115 +311,19 @@ def _tool_evidence_report(args: dict, **kwargs) -> str:
                                  allow_public=bool(entry.get("allow_public"))).to_dict())
 
 
-def _first_sentence(text: str) -> str:
-    for sentence in SENTENCE.findall(text):
-        sentence = sentence.strip()
-        if len(sentence) >= 25:
-            return sentence
-    return ""
-
-
 def _trust_report() -> dict:
-    """Run the battery: gate probes (deterministic) + pipeline probes (model calls)."""
+    """Run the scorecard against this deployment."""
     index = _index()
     if index is None:
         return {"error": "no corpus configured"}
     cfg = _cfg()
-    stats = index.stats()
-    sample = index.sample_passages(INTERNAL, 3)
-
-    gate: dict[str, bool | None] = {}
-    answerable = None
-    if sample:
-        passage = sample[0]
-        real = _first_sentence(passage.text)
-        title = passage.text.strip().splitlines()[0].lstrip("# ").strip()[:120]
-        if real:
-            gate["verbatim_quote_allowed"] = gate_check(f'"{real}"', [passage]).ok
-            gate["paraphrase_allowed"] = gate_check("In short, " + real, [passage]).ok
-        gate["invented_quote_caught"] = not gate_check(
-            '"The board approved a 47% increase in Q3."', [passage]).ok
-        gate["invented_figure_caught"] = not gate_check(
-            "The reconciliation total was 918,442 units.", [passage]).ok
-        if title:
-            answerable = f"What does the corpus say about {title}?"
-
-    model_error = None
-    abstained = 0
-    answered = 0
-    try:
-        llm = _llm()
-        for probe in UNANSWERABLE_PROBES:
-            run = orchestrator(probe, index, llm, domain=cfg["domain"],
-                               min_overlap=cfg["min_overlap"],
-                               relevance_floor=cfg["internal_relevance"])
-            abstained += int(run.abstained)
-        if answerable:
-            run = orchestrator(answerable, index, llm, domain=cfg["domain"],
-                               min_overlap=cfg["min_overlap"],
-                               relevance_floor=cfg["internal_relevance"])
-            answered += int(not run.abstained)
-    except (EndpointError, ModelError) as exc:
-        model_error = str(exc)
-    except Exception as exc:
-        model_error = f"{type(exc).__name__}: {exc}"
-
-    checks = [v for v in gate.values() if v is not None]
-    gate_score = (sum(1 for v in checks if v) / len(checks)) if checks else 0.0
-    abstain_score = abstained / len(UNANSWERABLE_PROBES)
-    answer_score = answered / 1 if answerable else 0.0
-    score = round(100 * (0.5 * gate_score + 0.3 * abstain_score + 0.2 * answer_score))
-    verdict = "trusted" if score >= 85 else "partial" if score >= 60 else "untrusted"
-
-    return {
-        "verdict": verdict,
-        "score": score,
-        "corpus": {
-            "documents": stats["documents"],
-            "passages": stats["passages"],
-            "by_tier": stats["by_tier"],
-            "sources": stats["sources"],
-        },
-        "gate": gate,
-        "pipeline": {
-            "abstained_on_unanswerable": f"{abstained}/{len(UNANSWERABLE_PROBES)}",
-            "answered_known_question": f"{answered}/{1 if answerable else 0}",
-            "model_error": model_error,
-        },
-        "clearance": {
-            "session_model": "local" if _session_is_local() else "remote",
-            "internal_material": "shareable with this model"
-            if _session_is_local() else "withheld from this model",
-        },
-    }
-
-
-def _render_trust(report: dict) -> str:
-    if report.get("error"):
-        return f"Trust report unavailable: {report['error']}"
-    lines = [f"**Trust report — {report['verdict']} ({report['score']}/100)**", ""]
-    corpus = report["corpus"]
-    tiers = corpus["by_tier"]
-    lines.append(
-        f"Corpus: {corpus['documents']} documents, {corpus['passages']} passages "
-        f"({tiers.get(INTERNAL, 0)} internal, {tiers.get(PUBLIC, 0)} public).")
-    lines.append("")
-    lines.append("Gate:")
-    for name, passed in report["gate"].items():
-        if passed is None:
-            continue
-        lines.append(f"- {'PASS' if passed else 'FAIL'} — {name.replace('_', ' ')}")
-    pipeline = report["pipeline"]
-    lines.append("")
-    lines.append("Pipeline:")
-    lines.append(f"- abstained on unanswerable: {pipeline['abstained_on_unanswerable']}")
-    lines.append(f"- answered a known question: {pipeline['answered_known_question']}")
-    if pipeline["model_error"]:
-        lines.append(f"- model error: {pipeline['model_error']}")
-    lines.append("")
-    lines.append(f"Clearance: {report['clearance']['session_model']} model, "
-                 f"internal material {report['clearance']['internal_material']}.")
-    return "\n".join(lines)
+    return audit_mod.run_audit(
+        index, _llm(),
+        domain=cfg["domain"],
+        min_overlap=cfg["min_overlap"],
+        relevance_floor=cfg["internal_relevance"],
+        local=_session_is_local(),
+    )
 
 
 CORPUS_ASK_SCHEMA = {
@@ -467,7 +394,7 @@ def _cmd_ground(raw_args: str, **kwargs) -> str:
 
 
 def _cmd_trust(raw_args: str, **kwargs) -> str:
-    return _render_trust(_trust_report())
+    return audit_mod.render(_trust_report())
 
 
 def register(ctx) -> None:

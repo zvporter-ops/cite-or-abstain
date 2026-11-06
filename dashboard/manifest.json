@@ -1,0 +1,11 @@
+{
+  "name": "cite-or-abstain",
+  "label": "Cite or Abstain",
+  "version": "0.2.0",
+  "description": "Evidence gate status: corpus tiers, last gate outcome, trust score.",
+  "icon": "ShieldCheck",
+  "api": "plugin_api.py",
+  "tab": {
+    "hidden": true
+  }
+}

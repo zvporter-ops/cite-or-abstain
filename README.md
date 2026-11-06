@@ -118,6 +118,19 @@ binaries and unsupported formats are skipped rather than guessed at.
 | `evidence_report` | Check a reply against this turn's evidence |
 | `corpus_audit` | Score the deployment (the `/trust` battery, as JSON) |
 
+## Desktop pane
+
+The same repo ships both halves. Hermes Desktop gets an **evidence** pane and a status-bar
+chip, backed by `dashboard/plugin_api.py` at `/api/plugins/cite-or-abstain/`:
+
+- corpus composition by tier, and whether the current model is local or remote;
+- the last gated reply — clean, or the unsupported claims by kind, plus internal coverage;
+- a mode switch (`off` / `flag` / `strict`) that writes the plugin setting;
+- **Run audit**, which runs the same battery as `/trust` and shows the score.
+
+The pane reads the same `coa.audit` module the command runs, so the number in the UI and
+the number in the terminal cannot drift apart.
+
 ## Limits, stated plainly
 
 - **Arithmetic is flagged.** A derived figure (`$250,000 × 2%`) is not in the corpus, so
