@@ -1,5 +1,5 @@
 name: cite-or-abstain
-repo: https://github.com/zacharyporter/cite-or-abstain
+repo: https://github.com/zvporter-ops/cite-or-abstain
 sha: "0000000000000000000000000000000000000000"
 title: Cite or Abstain
 description: >-
@@ -29,7 +29,7 @@ maintainer: zacharyporter
 tier: community
 category: tools
 requires_hermes: ">=0.22.0"
-docs_url: https://github.com/zacharyporter/cite-or-abstain#readme
+docs_url: https://github.com/zvporter-ops/cite-or-abstain#readme
 version: "0.2.0"
 readme: true
 platforms: []
