@@ -30,14 +30,36 @@ model asked to judge whether the context is sufficient has no reason to invent o
 6. **At `low`, do not generate.** Return the refusal, the model's reasons as limitations,
    and the retrieval targets as recommendations.
 
+## Tiers
+
+Every passage carries a tier, and the order is the point:
+
+1. **internal** — anything the user fed the deployment. Answer from here first, cite it first.
+2. **public** — reference material anyone could have. Use it only when internal material does
+   not cover the question, and say plainly that the answer rests on public sources.
+3. **nothing** — refuse, and name the material that would answer it.
+
+A question counts as covered by internal material only when the passages cover most of its
+content words. One shared word ("window" in a launch memo) is not coverage — treating it as
+such withholds legitimate public answers.
+
+Private material never travels to a model that is not running locally. When internal
+material matches and the model is remote, withhold it and say so.
+
 ## The output gate
 
 After generation, check the reply mechanically:
 
 - Quoted spans must appear verbatim in the evidence.
-- Figures, dates, URLs and identifiers must appear in a retrieved passage.
+- Figures, dates, URLs and identifiers must appear in a retrieved passage. Mask line and
+  passage references first, or every citation reads as a fabricated figure.
+- A claim found only in public material is disclosed, not blocked — unless public answers
+  were not permitted, in which case it is a violation.
 - Prose that merely paraphrases is **not** a violation. Flagging paraphrase makes the
   gate unusable.
+
+Do not echo the offending span in a refusal: repeating a fabricated figure hands it to the
+user anyway. Name the kind of claim, not its content.
 
 ## Anti-patterns
 
@@ -45,3 +67,5 @@ After generation, check the reply mechanically:
 - Treating retrieval as proof. Retrieval can return material *about* the topic that does
   not answer the question.
 - Blocking on soft signals. Only narrow, verifiable claims should block.
+- Treating a derived figure as supported because its inputs were. Arithmetic is not
+  evidence; flag it.

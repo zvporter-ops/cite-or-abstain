@@ -1,18 +1,20 @@
 name: cite-or-abstain
 label: Cite or Abstain
-version: 0.1.0
+version: 0.2.0
 manifest_version: 2
 license: MIT
 homepage: https://github.com/zacharyporter/cite-or-abstain
-tags: [evidence, grounding, abstention, retrieval, local-models]
+tags: [evidence, grounding, abstention, retrieval, local-models, provenance]
 description: >-
-  Evidence-gated answering. Every reply is either supported by your own corpus or
-  explicitly refused. A three-phase pipeline rates whether the retrieved material can
-  answer the question, turns a gap into a retrieval target, and skips generation
-  entirely when the corpus is silent. A mechanical output gate then checks the reply
-  against the evidence: quoted spans must be verbatim, and figures, dates, URLs and
-  identifiers must appear in a retrieved passage. No embeddings, no dependency beyond
-  the standard library, and no model is ever asked to grade its own answer.
+  Evidence-gated answering with a provenance hierarchy. Your own material (internal) is
+  answered from first; public reference material is used only when internal material does
+  not cover the question, and every answer that leans on it says so. Every reply is then
+  checked mechanically against the passages that turn retrieved: quoted spans must be
+  verbatim, figures, dates, URLs and identifiers must appear in a retrieved passage, and
+  claims resting only on public material are disclosed. Private material is withheld from
+  any model that is not running locally. `/trust` scores the deployment. No embeddings, no
+  dependency beyond the standard library, and no model is ever asked to grade its own
+  answer.
 requires_hermes: ">=0.22.0"
 provides_tools:
   - corpus_ask

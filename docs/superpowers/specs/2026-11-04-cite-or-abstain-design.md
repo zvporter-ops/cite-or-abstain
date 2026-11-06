@@ -204,3 +204,59 @@ sequenceDiagram
 3. Audit mode in v1 (default: yes) vs. deferred.
 4. Which corpus the demo indexes: a curated subset of the vault, or the bundled example
    corpus.
+
+## 11. Revision: tiered provenance and day-one trust
+
+The v1 design gated a single corpus. The product thesis is broader: throw this on any new
+system and you can trust it. That requires three things v1 did not have.
+
+### 11.1 Tiers
+
+Every passage carries a tier. `internal` is anything the user feeds the deployment and it
+outranks everything. `public` is reference material anyone could have. Retrieval runs
+internal first, then public, and the rendered evidence labels each block with its tier so
+the model can see the difference.
+
+The transition is the product: on day one there is no internal material, so answers rest on
+public reference and say so. The moment internal material covers the question, it takes
+precedence and the answer stops being a public one.
+
+A question counts as covered by internal material only when a passage covers at least
+`internal_relevance` (default 0.6) of its content words. Without that floor, one incidental
+word ("window" in a launch memo) made a rollback question look covered and withheld the
+public answer. Found in a live run; regression test in `tests/test_tiers.py`.
+
+### 11.2 Clearance
+
+If internal material matches the question and the active model is not local, the material is
+withheld and the model is told to say so. Locality is decided by `coa/leakguard.py`:
+loopback, RFC1918, Tailscale CGNAT (`100.64.0.0/10` — `ipaddress` does not report CGNAT as
+private, so this is an explicit range) and `.local`/`.lan`/`.internal` names are local;
+anything unclassified is remote. Fail closed.
+
+### 11.3 Trust scorecard
+
+`/trust` (and the `corpus_audit` tool) runs a battery against the configured deployment:
+deterministic gate probes (invented quote, invented figure, verbatim quote, paraphrase) plus
+pipeline probes (abstention on unanswerable questions, answer on a known one). It reports a
+score, a verdict, the corpus composition by tier, and whether internal material would be
+shared with the current model. A score is a measurement of that deployment, not a claim about
+the plugin in general.
+
+### 11.4 Ingestion
+
+"Anything you might give it" has to be true, so `coa/ingest.py` reads Markdown, text, rst,
+HTML, PDF (via `pdftotext` when present), Office documents by parsing the OOXML zip, and
+images when `tesseract` exists. Files with a binary header, archives hiding binaries, and
+unsupported formats are skipped rather than guessed at.
+
+### 11.5 Two defects found only by running it live
+
+- **Incidental relevance.** Fixed by the floor in 11.1.
+- **Tool-using turns escaped the gate.** `transform_llm_output` fires once per turn and a
+  tool-using turn finished on a path that never saw the final text. Registering with
+  `hold_stream=True` holds the reply until the gate has run; the cost is token streaming
+  while the plugin is enabled, and it is the right trade: showing unchecked text is the
+  thing the plugin exists to prevent.
+- **Refusals echoed the fabrication.** The strict refusal quoted the offending figure back
+  to the user. It now names the kind of claim, never its content.

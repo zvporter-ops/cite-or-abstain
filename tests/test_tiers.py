@@ -123,6 +123,18 @@ class TestPrecedence(unittest.TestCase):
         self.assertEqual(run.internal_count, 1)
         self.assertEqual(run.passages[0].tier, INTERNAL)
 
+    def test_incidental_word_does_not_count_as_internal_coverage(self):
+        # The bug a live run exposed: "window" in a launch memo made a rollback question
+        # look covered by internal material, so the public answer was withheld.
+        memo = passage("Launch window is March 14 to March 28.", INTERNAL, "memo.md")
+        public = passage("A rollback window is when a deployment can be reverted.", PUBLIC, "pub.md")
+        index = FakeIndex({"rollback window": [memo, public]})
+        llm = Canned(["CONFIDENCE: high\nREASONS:\n- sufficient", "ANSWER:\nMarch\nLIMITATIONS:\n- none\nRECOMMENDATIONS:\n- none"])
+        run = orchestrator("rollback window", index, llm, prompts={
+            "phase1": "p1", "phase2": "p2", "phase3": "p3"}, relevance_floor=0.6)
+        self.assertEqual(run.internal_count, 0)
+        self.assertEqual(run.tier, PUBLIC)
+
     def test_public_only_run_is_marked_public(self):
         public = passage("Public rollback window guidance is March.", PUBLIC, "pub.md")
         index = FakeIndex({"rollback window": [public]})
