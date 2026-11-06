@@ -1,0 +1,79 @@
+name: cite-or-abstain
+label: Cite or Abstain
+version: 0.1.0
+manifest_version: 2
+license: MIT
+homepage: https://github.com/zacharyporter/cite-or-abstain
+tags: [evidence, grounding, abstention, retrieval, local-models]
+description: >-
+  Evidence-gated answering. Every reply is either supported by your own corpus or
+  explicitly refused. A three-phase pipeline rates whether the retrieved material can
+  answer the question, turns a gap into a retrieval target, and skips generation
+  entirely when the corpus is silent. A mechanical output gate then checks the reply
+  against the evidence: quoted spans must be verbatim, and figures, dates, URLs and
+  identifiers must appear in a retrieved passage. No embeddings, no dependency beyond
+  the standard library, and no model is ever asked to grade its own answer.
+requires_hermes: ">=0.22.0"
+provides_tools:
+  - corpus_ask
+  - evidence_report
+  - corpus_audit
+provides_hooks:
+  - pre_llm_call
+  - transform_llm_output
+optional_env:
+  - name: COA_API_KEY
+    description: "Bearer token for the configured OpenAI-compatible endpoint, if it needs one."
+    password: true
+config_schema:
+  corpus_roots:
+    type: list
+    default: []
+    description: >-
+      INTERNAL material: anything the user feeds the deployment -- transcripts, contracts,
+      code, spreadsheets, PDFs, emails. Answers come from here first. Entries may be a
+      plain path or {path: ..., tier: internal}.
+  public_roots:
+    type: list
+    default: []
+    description: >-
+      PUBLIC reference material anyone could have. Used only when internal material does
+      not cover the question, and every answer that leans on it is labelled as public.
+  strictness:
+    type: str
+    default: flag
+    description: >-
+      off disables the output gate; flag appends an evidence report to the reply and
+      leaves streaming intact; strict withholds a reply that contains an unsupported
+      quote, figure, date, URL or identifier and substitutes a refusal.
+  endpoint:
+    type: str
+    default: ""
+    description: >-
+      OpenAI-compatible base URL for the pipeline's own model calls (for example a local
+      vLLM server). Leave empty to use the session's active model through Hermes.
+  endpoint_model:
+    type: str
+    default: ""
+    description: "Model id to request from endpoint. Empty means the first model it serves."
+  domain:
+    type: str
+    default: research
+    description: "Lens for the pipeline: research, code_review, debugging, system_ops, content_creation."
+  max_evidence_chars:
+    type: int
+    default: 6000
+    description: "Upper bound on evidence injected into a turn."
+  min_overlap:
+    type: float
+    default: 0.25
+    description: >-
+      Corpus-vocabulary coverage below which a self-reported high confidence is demoted.
+      Raise it to gate harder, lower it to gate looser.
+  internal_relevance:
+    type: float
+    default: 0.6
+    description: >-
+      Share of a question's content words an internal passage must cover before the
+      question counts as answered by internal material. Higher means stricter: fewer
+      questions are treated as covered, so more answers fall back to public material.
