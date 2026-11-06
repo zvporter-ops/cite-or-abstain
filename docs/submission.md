@@ -1,0 +1,35 @@
+# Submission checklist
+
+Deadline: **Nov 11 2026, 5:00 PM EST**.
+
+| # | Step | State |
+|---|---|---|
+| 1 | Public repo at a 40-char SHA | pending — `scripts/publish.sh` |
+| 2 | `hermes plugins validate` green at that SHA | done locally (16/16) |
+| 3 | Catalog entry `plugin-catalog/cite-or-abstain.yaml` | drafted in `docs/catalog-entry.yaml`; PR opened by `scripts/publish.sh` |
+| 4 | Demo video, under 90s, plugin shown working | script in `docs/demo-script.md`; needs recording |
+| 5 | Post on X tagging @NousResearch | pending |
+| 6 | Submit both links at https://form.typeform.com/to/FwJLvOln | pending |
+
+## X post draft
+
+> Built Cite or Abstain for the Hermes plugin hackathon: an evidence gate for any local AI
+> deployment.
+>
+> Your own material outranks public material, public answers are labelled as public, and
+> anything unsupported never reaches you. The model never grades itself.
+>
+> 90s demo 👇 @NousResearch
+
+## Form fields
+
+- **Plugin repo:** the public repo URL
+- **Pull request:** the catalog PR URL
+- **Demo video:** the X post URL
+- **Name / contact:** Zachary Porter
+
+## After the PR is open
+
+The catalog checks run when a maintainer starts them; entries are reviewed every few days.
+SHA bumps are separate PRs. Do not push changes to the plugin repo after pinning without
+opening a SHA-bump PR, or the listing will drift from what was reviewed.
