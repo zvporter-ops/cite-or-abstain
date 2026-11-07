@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
@@ -127,7 +128,9 @@ class CorpusIndex:
         self.sources = normalize_roots(roots)
         self.db_path = Path(db_path).expanduser()
         self.max_files = max_files
-        self._conn: sqlite3.Connection | None = None
+        # One connection per thread: the index is shared by the gateway's hook thread,
+        # tool threads and the desktop API, and a sqlite connection may not cross threads.
+        self._local = threading.local()
         self._terms: dict[str, int] = {}
         self._n_passages = 0
         self._avgdl = 1.0
@@ -139,11 +142,13 @@ class CorpusIndex:
     # ---------------------------------------------------------------- schema
 
     def _connect(self) -> sqlite3.Connection:
-        if self._conn is not None:
-            return self._conn
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            return conn
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(self.db_path))
+        conn = sqlite3.connect(str(self.db_path), timeout=30)
         conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=30000")
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS docs (
@@ -177,7 +182,7 @@ class CorpusIndex:
             """
         )
         self._migrate(conn)
-        self._conn = conn
+        self._local.conn = conn  # set before _load_stats, which re-enters _connect
         self._load_stats()
         return conn
 
@@ -272,8 +277,7 @@ class CorpusIndex:
                         yield path, tier
 
     def _drop_doc(self, doc_id: int) -> None:
-        conn = self._conn
-        assert conn is not None
+        conn = self._connect()
         ids = [int(r[0]) for r in conn.execute(
             "SELECT id FROM passages WHERE doc_id = ?", (doc_id,)
         )]
@@ -424,9 +428,10 @@ class CorpusIndex:
         }
 
     def close(self) -> None:
-        if self._conn is not None:
-            self._conn.close()
-            self._conn = None
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            conn.close()
+            self._local.conn = None
 
 
 def _chunk(text: str) -> list[tuple[int, str]]:

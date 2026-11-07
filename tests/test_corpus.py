@@ -139,5 +139,76 @@ class TestRetrieve(CorpusTestCase):
         self.assertIn("src.md", hit.cite())
 
 
+class TestCrossThread(CorpusTestCase):
+    """The gateway calls hooks on one thread and tools on another.
+
+    A sqlite connection is bound to the thread that opened it, so a single cached
+    connection raises ProgrammingError the moment the index is shared -- which in
+    practice meant pre_llm_call failed and the gate never ran at all.
+    """
+
+    def test_query_from_another_thread(self):
+        self.write("memo.md", "Project Falcon budget is 250,000 approved.")
+        index = self.index()
+        index.build()
+
+        out = {}
+
+        def worker():
+            out["hits"] = index.retrieve("Project Falcon budget")
+            out["stats"] = index.stats()
+
+        import threading
+        t = threading.Thread(target=worker)
+        t.start()
+        t.join()
+        self.assertNotIn("error", out)
+        self.assertTrue(out["hits"], "a second thread must be able to query the index")
+        self.assertEqual(out["stats"]["documents"], 1)
+
+    def test_concurrent_queries(self):
+        self.write("memo.md", "Helios ingest API slipped twice in Q4.")
+        index = self.index()
+        index.build()
+
+        import threading
+        errors, hits = [], []
+
+        def worker():
+            try:
+                hits.append(len(index.retrieve("Helios ingest API")))
+            except Exception as exc:  # noqa: BLE001 - the failure is the assertion
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(errors, [], f"concurrent queries raised: {errors[:2]}")
+        self.assertEqual(len(hits), 8)
+        self.assertTrue(all(h > 0 for h in hits))
+
+    def test_build_then_query_across_threads(self):
+        self.write("a.md", "rollback window definition for staging migrations")
+        index = self.index()
+
+        import threading
+        result = {}
+
+        def worker():
+            try:
+                index.build()
+                result["hits"] = index.retrieve("rollback window")
+            except Exception as exc:  # noqa: BLE001
+                result["error"] = exc
+
+        t = threading.Thread(target=worker)
+        t.start()
+        t.join()
+        self.assertNotIn("error", result)
+        self.assertTrue(result["hits"])
+
+
 if __name__ == "__main__":
     unittest.main()

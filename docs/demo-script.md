@@ -7,6 +7,7 @@ Set up before recording (not on camera):
 
 ```bash
 cd /Users/zacharyporter/Documents/AI_Dev/github-repos/cite-or-abstain
+export PATH="$HOME/.local/bin:$PATH"
 hermes config set plugins.entries.cite-or-abstain.settings.corpus_roots '[]'   # start empty
 hermes plugins disable cite-or-abstain && hermes plugins enable cite-or-abstain
 ```
@@ -37,7 +38,9 @@ hermes plugins disable cite-or-abstain && hermes plugins enable cite-or-abstain
 hermes -z "What is the Project Falcon budget and launch window?"
 ```
 
-Expect: answered from `examples/internal/falcon-memo.md`, cited as internal, gate clean.
+Expect: `From your internal memo — no public material needed`, $250,000, March 14–28 2026,
+cited to `falcon-memo.md`, `100% from internal material`. The gate flags one figure —
+`255,000` — because the memo states 2%, not the dollar total.
 *(Beat: the same question now has an answer, and it comes from your material.)*
 
 ## 0:48–1:00 — public material is labelled, not laundered
@@ -60,7 +63,8 @@ Expect: the model computes the 2% contingency ($5,000, $255,000) and the gate fl
 figures that appear in no retrieved passage. *(Beat: arithmetic is not evidence.)*
 
 ```bash
-hermes -z "/ground strict"
+hermes config set plugins.entries.cite-or-abstain.settings.strictness strict
+hermes plugins disable cite-or-abstain && hermes plugins enable cite-or-abstain
 hermes -z "What is the Project Falcon budget?"
 ```
 
@@ -69,14 +73,23 @@ Expect: a refusal naming the kind of claim, never echoing the fabricated number.
 ## 1:15–1:30 — the score
 
 ```bash
-hermes -z "/trust"
+hermes config set plugins.entries.cite-or-abstain.settings.strictness flag
+hermes plugins disable cite-or-abstain && hermes plugins enable cite-or-abstain
+hermes -z "Call the corpus_audit tool and report the score."
 ```
 
-Expect: `Trust report — trusted (100/100)`, four gate probes passing, 2/2 abstentions,
-1/1 answered, clearance line showing the model is local.
+Expect: `verdict: trusted`, `score: 100`, four gate probes true, `2/2` abstentions,
+`1/1` answered, `clearance: session model local`.
 
 Cut to the Desktop **evidence** pane: corpus tiers, last gate outcome, mode switch, audit
 button. End on the status-bar chip.
+
+## Notes for the recording
+
+- `/trust` and `/ground` are interactive commands; in `hermes -z` one-shot mode use the
+  `corpus_audit` tool and the `strictness` config key, as above.
+- The gate annotates every reply while the plugin is enabled — that is the product, not
+  noise. `strictness: off` silences it for ordinary chat.
 
 ## Caption
 
