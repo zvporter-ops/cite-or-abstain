@@ -164,6 +164,11 @@ class TestModeNormalization(HookTestCase):
         self.assertEqual(PLUGIN._normalize_mode(False), "off")
         self.assertEqual(PLUGIN._normalize_mode(True), "flag")
 
+    def test_ints_map_to_modes(self):
+        # YAML can hand back 0/1 for a flag; 0 means off, anything else stays flag.
+        self.assertEqual(PLUGIN._normalize_mode(0), "off")
+        self.assertEqual(PLUGIN._normalize_mode(1), "flag")
+
     def test_strings_are_case_and_space_insensitive(self):
         self.assertEqual(PLUGIN._normalize_mode("STRICT"), "strict")
         self.assertEqual(PLUGIN._normalize_mode(" off "), "off")

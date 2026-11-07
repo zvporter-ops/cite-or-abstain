@@ -140,6 +140,8 @@ def _normalize_mode(value) -> str:
     """
     if isinstance(value, bool):
         return "flag" if value else "off"
+    if isinstance(value, int):
+        return "off" if value == 0 else "flag"
     text = str(value or "").strip().lower()
     return text if text in ("off", "flag", "strict") else "flag"
 
