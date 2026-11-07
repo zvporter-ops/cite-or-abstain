@@ -66,7 +66,9 @@ def _cfg() -> dict:
     return {
         "roots": _CTX.get_config("corpus_roots", []) or [],
         "public_roots": _CTX.get_config("public_roots", []) or [],
-        "strictness": _CTX.get_config("strictness", "flag") or "flag",
+        # No ``or "flag"`` here: a config value of False means "off", and collapsing it
+        # to the default would leave the gate running after the user turned it off.
+        "strictness": _CTX.get_config("strictness", "flag"),
         "endpoint": _CTX.get_config("endpoint", "") or "",
         "endpoint_model": _CTX.get_config("endpoint_model", "") or "",
         "domain": _CTX.get_config("domain", "research") or "research",
@@ -129,8 +131,22 @@ def _session_is_local() -> bool:
         return False
 
 
+def _normalize_mode(value) -> str:
+    """Coerce whatever the config holds into one of off|flag|strict.
+
+    ``hermes config set ... strictness off`` writes a YAML boolean, so the value can
+    arrive as False rather than "off"; treating that as unknown would silently leave
+    the gate running after the user turned it off.
+    """
+    if isinstance(value, bool):
+        return "flag" if value else "off"
+    text = str(value or "").strip().lower()
+    return text if text in ("off", "flag", "strict") else "flag"
+
+
 def _strictness(session_id: str) -> str:
-    return _STRICTNESS.get(session_id) or _cfg().get("strictness", "flag")
+    raw = _STRICTNESS.get(session_id) or _cfg().get("strictness", "flag")
+    return _normalize_mode(raw)
 
 
 def _record_gate(session_id: str, report, mode: str, withheld: int = 0) -> None:
@@ -383,7 +399,7 @@ AUDIT_SCHEMA = {
 def _cmd_ground(raw_args: str, **kwargs) -> str:
     mode = (raw_args or "").strip().lower()
     if mode not in ("off", "flag", "strict"):
-        return f"Evidence gate is {_cfg().get('strictness', 'flag')}. Use /ground off|flag|strict."
+        return f"Evidence gate is {_normalize_mode(_cfg().get('strictness', 'flag'))}. Use /ground off|flag|strict."
     _CTX.set_config("strictness", mode)
     _STRICTNESS.clear()
     return {

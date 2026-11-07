@@ -153,5 +153,44 @@ class TestGateInTurn(HookTestCase):
         self.assertIn("No unsupported claims", reply)
 
 
+class TestModeNormalization(HookTestCase):
+    """``hermes config set ... strictness off`` stores a YAML boolean, not the string.
+
+    If that arrives as False and is treated as unknown, the gate keeps annotating after
+    the user asked for silence -- the plugin would appear not to obey its own setting.
+    """
+
+    def test_booleans_map_to_modes(self):
+        self.assertEqual(PLUGIN._normalize_mode(False), "off")
+        self.assertEqual(PLUGIN._normalize_mode(True), "flag")
+
+    def test_strings_are_case_and_space_insensitive(self):
+        self.assertEqual(PLUGIN._normalize_mode("STRICT"), "strict")
+        self.assertEqual(PLUGIN._normalize_mode(" off "), "off")
+        self.assertEqual(PLUGIN._normalize_mode("flag"), "flag")
+
+    def test_unknown_and_missing_fall_back_to_flag(self):
+        self.assertEqual(PLUGIN._normalize_mode("banana"), "flag")
+        self.assertEqual(PLUGIN._normalize_mode(None), "flag")
+        self.assertEqual(PLUGIN._normalize_mode(""), "flag")
+
+    def test_boolean_false_in_config_silences_the_gate(self):
+        self.pre("What is the Project Falcon budget?")
+        PLUGIN._CTX.set_config("strictness", False)
+        self.assertIsNone(self.post("The Project Falcon budget is 918,442 units."))
+
+    def test_boolean_true_in_config_annotates(self):
+        self.pre("What is the Project Falcon budget?")
+        PLUGIN._CTX.set_config("strictness", True)
+        reply = self.post("The Project Falcon budget is 918,442 units.")
+        self.assertIn("Evidence gate", reply)
+
+    def test_ground_reports_the_normalized_mode(self):
+        PLUGIN._CTX.set_config("strictness", False)
+        message = PLUGIN._cmd_ground("nonsense")
+        self.assertIn("off", message)
+        self.assertNotIn("False", message)
+
+
 if __name__ == "__main__":
     unittest.main()
