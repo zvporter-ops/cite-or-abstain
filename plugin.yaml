@@ -1,6 +1,6 @@
 name: cite-or-abstain
 label: Cite or Abstain
-version: 0.2.0
+version: 0.2.1
 manifest_version: 2
 license: MIT
 homepage: https://github.com/zvporter-ops/cite-or-abstain
@@ -12,9 +12,11 @@ description: >-
   checked mechanically against the passages that turn retrieved: quoted spans must be
   verbatim, figures, dates, URLs and identifiers must appear in a retrieved passage, and
   claims resting only on public material are disclosed. Private material is withheld from
-  any model that is not running locally. `/trust` scores the deployment. No embeddings, no
-  dependency beyond the standard library, and no model is ever asked to grade its own
-  answer.
+  any model that is not running locally -- the turn, `corpus_ask`, `corpus_audit` and
+  `/trust` all obey that one rule, and `corpus_ask` falls back to public material rather
+  than forward your documents to a remote model. `/trust` scores the deployment. No
+  embeddings, no dependency beyond the standard library, and no model is ever asked to
+  grade its own answer.
 requires_hermes: ">=0.22.0"
 provides_tools:
   - corpus_ask

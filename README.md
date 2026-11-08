@@ -67,6 +67,13 @@ never receives your private text. Local means loopback, RFC1918, Tailscale CGNAT
 (`100.64.0.0/10`) or a `.local`/`.lan`/`.internal` name; anything unclassified counts as
 remote, because failing closed is the only safe default.
 
+The rule covers every path that touches your material, not just the turn: `corpus_ask`
+answers from public material only when the model it would call is not local, `corpus_audit`
+and `/trust` refuse rather than sample internal passages into a remote model, and the
+clearance notice only points at `corpus_ask` when a local `endpoint` exists to answer
+through. With no `endpoint` set, the plugin calls your session model, so a cloud session
+gets public answers and an honest refusal — never your documents.
+
 ## Trust scorecard
 
 ```

@@ -113,9 +113,12 @@ def _llm():
         key = ""
         try:
             from agent.secret_scope import get_secret_str
-            key = get_secret_str("COA_API_KEY", "")
-        except Exception:
-            key = os.environ.get("COA_API_KEY", "")
+            key = get_secret_str("COA_API_KEY", "") or ""
+        except Exception as exc:
+            # No environment fallback. A stray ``COA_API_KEY`` in the environment would
+            # become a bearer token this plugin sent on the user's behalf, from a file
+            # nobody configured it to read -- the secret scope is the only sanctioned path.
+            logger.debug("secret scope unavailable; sending no API key: %s", exc)
         return endpoint_llm(cfg["endpoint"], key, cfg.get("endpoint_model", ""))
     return ctx_llm(_CTX)
 
@@ -129,6 +132,19 @@ def _session_is_local() -> bool:
         return leakguard.classify(base) == leakguard.LOCAL
     except Exception:
         return False
+
+
+def _model_is_local() -> bool:
+    """Is the model this plugin will actually call local?
+
+    With an ``endpoint`` configured the plugin calls that endpoint, so the endpoint decides;
+    otherwise it calls Hermes' active model. This is the one question the clearance rule
+    needs, and every path that touches internal material asks it here rather than guessing.
+    """
+    endpoint = _cfg().get("endpoint") or ""
+    if endpoint:
+        return leakguard.classify(endpoint) == leakguard.LOCAL
+    return _session_is_local()
 
 
 def _normalize_mode(value) -> str:
@@ -209,7 +225,8 @@ def on_pre_llm_call(session_id: str = "", user_message: str = "", **kwargs):
                 "internal_withheld": len(internal),
                 "allow_public": True,
             }
-            return {"context": leakguard.redaction_notice(len(internal))}
+            return {"context": leakguard.redaction_notice(
+                len(internal), corpus_ask_local=_model_is_local())}
 
         passages = internal + public
         _LAST[session_id] = {
@@ -262,11 +279,15 @@ def on_transform_llm_output(response_text: str = "", session_id: str = "", **kwa
         _record_gate(session_id, report, mode, withheld)
 
         if withheld and mode == "strict":
+            hint = ("Use `corpus_ask`, which answers it against the local endpoint."
+                    if _model_is_local() else
+                    "To answer it locally, set a local endpoint in the plugin settings "
+                    "(`plugins.entries.cite-or-abstain.settings.endpoint`); without one, "
+                    "`corpus_ask` would call this same remote model.")
             return (
                 "I can't answer that here. Internal material matches this question, and "
                 "the active model is not running locally, so the material was withheld "
-                "rather than sent to a remote provider. Use `corpus_ask`, which answers "
-                "it against the local endpoint."
+                "rather than sent to a remote provider. " + hint
             )
 
         if mode == "strict" and not report.ok:
@@ -300,16 +321,38 @@ def _tool_corpus_ask(args: dict, **kwargs) -> str:
     if index is None:
         return json.dumps({"error": "no corpus configured; set corpus_roots in the plugin settings"})
     cfg = _cfg()
+    # This tool calls the same model as the turn unless an endpoint is configured, so the
+    # clearance rule applies here too: private passages stay out of a non-local model's
+    # context, and the run falls back to the public tier.
+    internal_allowed = _model_is_local()
     try:
         run = orchestrator(question, index, _llm(),
                            domain=args.get("domain") or cfg["domain"],
                            min_overlap=cfg["min_overlap"],
-                           relevance_floor=cfg["internal_relevance"])
+                           relevance_floor=cfg["internal_relevance"],
+                           internal_allowed=internal_allowed)
     except (EndpointError, ModelError) as exc:
         return json.dumps({"error": f"model unavailable: {exc}"})
     except Exception as exc:
         return json.dumps({"error": str(exc)})
     payload = run.to_dict()
+    if run.internal_withheld:
+        payload["notice"] = (
+            f"{run.internal_withheld} internal passage(s) matched but were withheld: the "
+            "active model is not local. This answer uses public material only. Set a local "
+            "`endpoint` in the plugin settings to answer from internal material."
+        )
+    if not run.passages:
+        # Nothing retrieved: abstain here rather than let a model answer over an empty
+        # context, which is the exact confabulation this plugin exists to stop.
+        payload["abstained"] = True
+        payload["answer"] = (
+            "Abstained: nothing in the corpus covers this question. "
+            + (f"{run.internal_withheld} internal passage(s) matched but cannot be sent to "
+               "a non-local model; set a local endpoint to answer from them."
+               if run.internal_withheld else "No answer was generated.")
+        )
+        return json.dumps(payload)
     if not run.abstained:
         payload["claim_gate"] = gate_check(
             run.answer, run.passages,
@@ -335,12 +378,24 @@ def _trust_report() -> dict:
     if index is None:
         return {"error": "no corpus configured"}
     cfg = _cfg()
+    internal_allowed = _model_is_local()
+    # The gate probes sample internal passages, so an audit against a non-local model would
+    # ship private text to it. Refuse instead of quietly scoring the public tier, which
+    # would report a number for a deployment this plugin will not actually run.
+    if not internal_allowed and index.stats()["by_tier"].get(INTERNAL, 0):
+        return {"error": (
+            "internal material is configured and the active model is not local, so the "
+            "audit would send private passages to it. Set a local endpoint in the plugin "
+            "settings (`plugins.entries.cite-or-abstain.settings.endpoint`) and run the "
+            "audit again."
+        )}
     return audit_mod.run_audit(
         index, _llm(),
         domain=cfg["domain"],
         min_overlap=cfg["min_overlap"],
         relevance_floor=cfg["internal_relevance"],
-        local=_session_is_local(),
+        local=internal_allowed,
+        internal_allowed=internal_allowed,
     )
 
 

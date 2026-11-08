@@ -84,8 +84,12 @@ def gate_probes(index: Any) -> tuple[dict[str, bool | None], str | None]:
 
 def run_audit(index: Any, llm, *, domain: str = "research",
               min_overlap: float = 0.25, relevance_floor: float = 0.6,
-              local: bool = True) -> dict:
-    """Run both halves and return the scorecard."""
+              local: bool = True, internal_allowed: bool = True) -> dict:
+    """Run both halves and return the scorecard.
+
+    ``internal_allowed=False`` keeps internal passages out of the pipeline probes, for a
+    deployment whose model is remote and whose corpus holds nothing private.
+    """
     stats = index.stats()
     checks, answerable = gate_probes(index)
 
@@ -95,11 +99,13 @@ def run_audit(index: Any, llm, *, domain: str = "research",
     try:
         for probe in UNANSWERABLE_PROBES:
             run = orchestrator(probe, index, llm, domain=domain,
-                               min_overlap=min_overlap, relevance_floor=relevance_floor)
+                               min_overlap=min_overlap, relevance_floor=relevance_floor,
+                               internal_allowed=internal_allowed)
             abstained += int(run.abstained)
         if answerable:
             run = orchestrator(answerable, index, llm, domain=domain,
-                               min_overlap=min_overlap, relevance_floor=relevance_floor)
+                               min_overlap=min_overlap, relevance_floor=relevance_floor,
+                               internal_allowed=internal_allowed)
             answered += int(not run.abstained)
     except Exception as exc:  # a broken endpoint must not lose the gate results
         model_error = f"{type(exc).__name__}: {exc}"

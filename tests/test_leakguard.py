@@ -45,10 +45,18 @@ class TestLocality(unittest.TestCase):
 
 class TestNotice(unittest.TestCase):
     def test_notice_names_the_count_and_the_rule(self):
-        text = redaction_notice(3)
+        text = redaction_notice(3, corpus_ask_local=True)
         self.assertIn("3 passage", text)
         self.assertIn("NOT been included", text)
         self.assertIn("corpus_ask", text)
+
+    def test_notice_does_not_recommend_corpus_ask_without_a_local_endpoint(self):
+        # corpus_ask answers through Hermes' active model when no endpoint is set, so
+        # pointing at it here would send the private material to the remote model after
+        # all. The notice must send the user to the setting instead.
+        text = redaction_notice(2, corpus_ask_local=False)
+        self.assertNotIn("corpus_ask", text)
+        self.assertIn("local endpoint", text)
 
 
 if __name__ == "__main__":

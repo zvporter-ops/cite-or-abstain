@@ -8,6 +8,7 @@ function that happens to be called by them.
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import sys
 import tempfile
@@ -151,6 +152,136 @@ class TestGateInTurn(HookTestCase):
         reply = self.post("The Project Falcon budget is 250000.")
         self.assertIn("Evidence gate", reply)
         self.assertIn("No unsupported claims", reply)
+
+
+class RecordingLLM:
+    """Records every prompt and returns one response that parses in all three phases."""
+
+    def __init__(self, answer: str = "A rollback window is the period during which a "
+                                     "deployment can be reverted."):
+        self.answer = answer
+        self.calls: list[tuple[str, str]] = []
+
+    def __call__(self, system: str, user: str) -> str:
+        self.calls.append((system, user))
+        return ("CONFIDENCE: high\n"
+                f"ANSWER: {self.answer}\n"
+                "LIMITATIONS: none\n"
+                "RECOMMENDATIONS: none")
+
+    def text(self) -> str:
+        return "\n".join(system + "\n" + user for system, user in self.calls)
+
+
+class TestToolClearance(HookTestCase):
+    """``corpus_ask`` and ``corpus_audit`` answer through the same model as the turn.
+
+    With no ``endpoint`` configured they call Hermes' active model, which may be a cloud
+    model. Internal passages must not reach it: the README promises a cloud model never
+    sees private text, and the clearance notice points at ``corpus_ask`` as the local way
+    out. If the tool forwards private text anyway, the promise is false.
+    """
+
+    def ask(self, llm, question="What is the Project Falcon budget for the rollback window?"):
+        with mock.patch.object(PLUGIN, "_llm", return_value=llm):
+            return json.loads(PLUGIN._tool_corpus_ask({"question": question}))
+
+    def test_corpus_ask_withholds_internal_material_from_a_remote_session_model(self):
+        PLUGIN._CTX.set_config("endpoint", "")
+        llm = RecordingLLM()
+        with mock.patch.object(PLUGIN, "_session_is_local", return_value=False):
+            payload = self.ask(llm)
+        self.assertNotIn("250000", llm.text())
+        self.assertNotIn("250000", json.dumps(payload))
+        self.assertEqual(payload["tier"], "public")
+        self.assertEqual(payload["internal_withheld"], 1)
+        self.assertIn("public material only", payload["notice"])
+
+    def test_corpus_ask_withholds_internal_material_from_a_cloud_endpoint(self):
+        PLUGIN._CTX.set_config("endpoint", "https://api.openai.com/v1")
+        llm = RecordingLLM()
+        with mock.patch.object(PLUGIN, "_session_is_local", return_value=True):
+            payload = self.ask(llm)
+        self.assertNotIn("250000", llm.text())
+        self.assertNotEqual(payload["tier"], "internal")
+        self.assertEqual(payload["internal_withheld"], 1)
+
+    def test_corpus_ask_uses_internal_material_with_a_local_endpoint(self):
+        PLUGIN._CTX.set_config("endpoint", "http://127.0.0.1:8888/v1")
+        llm = RecordingLLM(answer="The Project Falcon budget is 250000.")
+        with mock.patch.object(PLUGIN, "_session_is_local", return_value=False):
+            payload = self.ask(llm)
+        self.assertIn("250000", llm.text())
+        self.assertEqual(payload["tier"], "internal")
+        self.assertEqual(payload["internal_withheld"], 0)
+
+    def test_corpus_ask_abstains_rather_than_leaking_when_only_internal_material_matches(self):
+        PLUGIN._CTX.set_config("endpoint", "")
+        PLUGIN._CTX.set_config("public_roots", [])
+        PLUGIN._INDEX = None
+        llm = RecordingLLM()
+        with mock.patch.object(PLUGIN, "_session_is_local", return_value=False):
+            payload = self.ask(llm)
+        self.assertNotIn("250000", llm.text())
+        self.assertTrue(payload["abstained"])
+        self.assertEqual(payload["tier"], "none")
+
+    def test_trust_refuses_when_internal_material_cannot_be_shared(self):
+        PLUGIN._CTX.set_config("endpoint", "")
+        with mock.patch.object(PLUGIN, "_session_is_local", return_value=False):
+            report = PLUGIN._trust_report()
+        self.assertIn("error", report)
+        self.assertIn("local endpoint", report["error"])
+
+    def test_trust_runs_when_a_local_endpoint_is_configured(self):
+        PLUGIN._CTX.set_config("endpoint", "http://127.0.0.1:8888/v1")
+        llm = RecordingLLM()
+        with mock.patch.object(PLUGIN, "_session_is_local", return_value=False), \
+                mock.patch.object(PLUGIN, "_llm", return_value=llm):
+            report = PLUGIN._trust_report()
+        self.assertNotIn("error", report)
+        self.assertIn("verdict", report)
+        self.assertIn("250000", llm.text())
+
+
+class TestKeyHandling(HookTestCase):
+    def test_api_key_is_read_only_through_the_secret_scope(self):
+        """A stray ``COA_API_KEY`` in the environment must not become the bearer token."""
+        PLUGIN._CTX.set_config("endpoint", "http://127.0.0.1:8888/v1")
+        captured = {}
+
+        def fake_endpoint(base, key="", model=""):
+            captured["key"] = key
+            return RecordingLLM()
+
+        with mock.patch.dict(os.environ, {"COA_API_KEY": "from-env"}), \
+                mock.patch.dict(sys.modules, {"agent.secret_scope": None}), \
+                mock.patch.object(PLUGIN, "endpoint_llm", side_effect=fake_endpoint):
+            PLUGIN._llm()
+        self.assertEqual(captured["key"], "")
+
+
+class TestClearanceNotice(HookTestCase):
+    """The notice and the strict-mode reply must not advertise a path that cannot work."""
+
+    def test_remote_notice_does_not_recommend_corpus_ask_without_a_local_endpoint(self):
+        PLUGIN._CTX.set_config("endpoint", "")
+        result = self.pre("What is the Project Falcon budget?", local=False)
+        self.assertNotIn("answers it locally", result["context"])
+        self.assertIn("local endpoint", result["context"])
+
+    def test_remote_notice_recommends_corpus_ask_when_a_local_endpoint_exists(self):
+        PLUGIN._CTX.set_config("endpoint", "http://127.0.0.1:8888/v1")
+        result = self.pre("What is the Project Falcon budget?", local=False)
+        self.assertIn("corpus_ask", result["context"])
+
+    def test_strict_withheld_reply_does_not_point_at_a_path_that_cannot_work(self):
+        PLUGIN._CTX.set_config("endpoint", "")
+        self.pre("What is the Project Falcon budget?", local=False)
+        PLUGIN._STRICTNESS["s1"] = "strict"
+        reply = self.post("The budget is 250000.")
+        self.assertNotIn("Use `corpus_ask`", reply)
+        self.assertIn("local endpoint", reply)
 
 
 class TestModeNormalization(HookTestCase):

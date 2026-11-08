@@ -46,7 +46,11 @@ def _settings() -> dict:
     return (entries.get(PLUGIN_ID) or {}).get("settings") or {}
 
 
-def _model_is_local() -> bool:
+def _model_is_local(settings: dict) -> bool:
+    """The pane's audit runs through ``endpoint``, so the endpoint decides locality."""
+    endpoint = (settings.get("endpoint") or "").strip()
+    if endpoint:
+        return leakguard.classify(endpoint) == leakguard.LOCAL
     try:
         from hermes_cli.config import load_config_readonly
         cfg = load_config_readonly() or {}
@@ -110,7 +114,7 @@ def status() -> dict:
     return {
         "mode": settings.get("strictness") or "flag",
         "corpus": corpus,
-        "model": "local" if _model_is_local() else "remote",
+        "model": "local" if _model_is_local(settings) else "remote",
         "last_gate": _last_gate(),
         "endpoint": bool((settings.get("endpoint") or "").strip()),
     }
@@ -141,5 +145,6 @@ def run_audit() -> dict:
         domain=settings.get("domain") or "research",
         min_overlap=float(settings.get("min_overlap") or 0.25),
         relevance_floor=float(settings.get("internal_relevance") or 0.6),
-        local=_model_is_local(),
+        local=_model_is_local(settings),
+        internal_allowed=_model_is_local(settings),
     )

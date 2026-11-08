@@ -45,14 +45,25 @@ def classify(url: str | None) -> str:
     return LOCAL if is_local_url(url) else CLOUD
 
 
-def redaction_notice(count: int) -> str:
-    """The directive injected when private evidence must not be sent."""
-    return (
+def redaction_notice(count: int, corpus_ask_local: bool = True) -> str:
+    """The directive injected when private evidence must not be sent.
+
+    ``corpus_ask_local`` says whether the plugin has a local endpoint to answer through.
+    With no endpoint configured ``corpus_ask`` calls Hermes' active model -- the same
+    remote model this notice is protecting against -- so recommending it here would
+    hand the material over by another door.
+    """
+    head = (
         "## CLEARANCE\n"
         f"{count} passage(s) of internal material match this question, and the active "
         "model is not running locally, so they have NOT been included here: sending them "
         "to a remote provider would disclose private material.\n"
         "Do not answer this question from general knowledge. Tell the user that internal "
-        "material exists but cannot be sent to this model, and that `corpus_ask` answers "
-        "it locally instead."
+        "material exists but cannot be sent to this model"
+    )
+    if corpus_ask_local:
+        return head + ", and that `corpus_ask` answers it locally instead."
+    return head + (
+        ", and that answering it needs a local endpoint set in the plugin settings "
+        "(`plugins.entries.cite-or-abstain.settings.endpoint`)."
     )

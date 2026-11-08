@@ -44,6 +44,7 @@ class RunResult:
     passages: list[Passage] = field(default_factory=list)
     tier: str = "none"          # highest tier that contributed evidence
     internal_count: int = 0
+    internal_withheld: int = 0  # internal passages that matched but were not sent
 
     def to_dict(self) -> dict:
         return {
@@ -54,6 +55,7 @@ class RunResult:
             "abstained": self.abstained,
             "tier": self.tier,
             "internal_passages": self.internal_count,
+            "internal_withheld": self.internal_withheld,
             "overlap": round(self.overlap, 3),
             "context_chars": self.context_chars,
             "answer": self.answer,
@@ -120,11 +122,17 @@ def render(passages: list[Passage], max_chars: int = MAX_CONTEXT_CHARS,
 def orchestrator(query: str, index, llm: LLMCall, domain: str = "research",
                  prompts: dict | None = None, max_retrievals: int = 2,
                  min_overlap: float = 0.25, k: int = INITIAL_K,
-                 relevance_floor: float = 0.0) -> RunResult:
+                 relevance_floor: float = 0.0,
+                 internal_allowed: bool = True) -> RunResult:
     """Run the three phases. ``index`` needs ``retrieve(query, k, tier) -> list[Passage]``.
 
     ``relevance_floor`` drops internal passages that only share an incidental word with
     the question, so a launch memo does not count as covering "what is a rollback window".
+
+    ``internal_allowed=False`` keeps the internal tier out of every prompt while still
+    counting what matched, so the caller can report what was withheld. The clearance rule
+    belongs here rather than at the call sites: three callers exist, and a rule enforced in
+    only two of them is not a rule.
     """
     prompts = prompts or build_prompts(domain)
     run = RunResult(query=query, domain=domain, confidence="low",
@@ -133,8 +141,13 @@ def orchestrator(query: str, index, llm: LLMCall, domain: str = "research",
     # Internal outranks public: retrieve it first, then fall back. Both go into the
     # context in that order, so the model reads the user's own material before
     # anything public.
-    internal = [p for p in index.retrieve(query, k=k, tier=INTERNAL)
-                if relevance(query, p) >= relevance_floor]
+    matched_internal = [p for p in index.retrieve(query, k=k, tier=INTERNAL)
+                        if relevance(query, p) >= relevance_floor]
+    if internal_allowed:
+        internal = matched_internal
+    else:
+        internal = []
+        run.internal_withheld = len(matched_internal)
     public = list(index.retrieve(query, k=k, tier=PUBLIC))
     passages = internal + public
     initial_context = render(passages)
@@ -167,8 +180,9 @@ def orchestrator(query: str, index, llm: LLMCall, domain: str = "research",
 
         seen = {(p.path, p.start_line) for p in passages}
         extra: list[Passage] = []
+        tiers = (INTERNAL, PUBLIC) if internal_allowed else (PUBLIC,)
         for request in requests[:max_retrievals]:
-            for tier in (INTERNAL, PUBLIC):
+            for tier in tiers:
                 for passage in index.retrieve(request, k=2, tier=tier):
                     key = (passage.path, passage.start_line)
                     if key not in seen:
@@ -211,11 +225,15 @@ def orchestrator(query: str, index, llm: LLMCall, domain: str = "research",
                 f"## ADDITIONAL MATERIAL REQUESTED\n"
                 f"{chr(10).join(run.context_requests) or '(none)'}\n\n"
                 f"## QUESTION\n{query}\n\n"
-                "Answer from the internal material first. If the internal material does "
-                "not settle the question and you rely on public material, say plainly "
-                "that the answer comes from public sources rather than the user's own "
-                "documents.\n\n"
-                "Answer the question.")
+                + ("Answer from the internal material first. If the internal material does "
+                   "not settle the question and you rely on public material, say plainly "
+                   "that the answer comes from public sources rather than the user's own "
+                   "documents.\n\n"
+                   if internal_allowed else
+                   "Internal material is not available to this model. Answer only from the "
+                   "PUBLIC material above and say plainly that the answer comes from public "
+                   "sources rather than the user's own documents.\n\n")
+                + "Answer the question.")
     answer, limitations, recommendations = parse_answer(raw_3)
     run.answer = answer
     run.limitations = limitations

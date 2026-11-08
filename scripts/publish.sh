@@ -22,7 +22,7 @@ if "$GH" repo view "$USER/cite-or-abstain" >/dev/null 2>&1; then
   echo "Repository $USER/cite-or-abstain already exists; pushing to it."
   git remote get-url origin >/dev/null 2>&1 || \
     git remote add origin "https://github.com/$USER/cite-or-abstain.git"
-  git push -u origin main
+  git push -u origin HEAD
 else
   echo "Creating public repository $USER/cite-or-abstain"
   "$GH" repo create cite-or-abstain --public --source=. --remote=origin --push \
@@ -66,7 +66,7 @@ git push -u origin add-cite-or-abstain
 
 BODY_FILE="$(mktemp -t pr-body.XXXXXX.md)"
 cat > "$BODY_FILE" <<'BODY'
-Adds `cite-or-abstain` v0.2.0, pinned at `__SHA__`.
+Adds `cite-or-abstain` v0.2.1, pinned at `__SHA__`.
 
 **What it does.** An evidence gate for any AI deployment. Internal material (anything the
 user feeds it) is retrieved and cited first; public reference material is used only when
@@ -77,9 +77,16 @@ must be verbatim, and figures, dates, URLs and identifiers must appear in a retr
 passage. No model is asked to grade its own answer. `/trust` scores the configured
 deployment.
 
+**Clearance rule, enforced on every path.** Private material never reaches a model that is
+not local. The turn's `pre_llm_call` withholds it, and so do the plugin's own tools: with no
+local `endpoint` set, `corpus_ask` answers from the public tier only (and reports how many
+internal passages it withheld), while `corpus_audit` and `/trust` refuse rather than sample
+internal passages into a remote model. The clearance notice only recommends `corpus_ask`
+when a local endpoint exists to answer through.
+
 **Validation.** `hermes plugins validate . --install-deps` passes at the pinned SHA
 (manifest, loadable entry, declared tools/hooks match registrations, config schema, security
-scan, desktop surface, no core override). 95 unit tests pass.
+scan, desktop surface, no core override). 116 unit tests pass.
 
 **Risky behaviour (rule 13).**
 - Reads only the directories configured in `corpus_roots` / `public_roots`, plus its own
