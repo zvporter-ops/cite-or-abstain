@@ -93,7 +93,7 @@ measurement of this deployment, not a claim about the plugin in general.
 ## Install
 
 ```bash
-hermes plugins install zacharyporter/cite-or-abstain --enable
+hermes plugins install zvporter-ops/cite-or-abstain --enable
 ```
 
 Then point it at your material:
@@ -163,8 +163,15 @@ the number in the terminal cannot drift apart.
 
 ## Related work
 
-The two halves come from earlier projects: [`cgp`](https://github.com/zacharyporter/cgp)
-(the confidence-gated input loop) and `transcript-forge` (the output gate). This plugin is
-where they meet, with tiers and a clearance rule added.
+Seven small tools preceded this one, and each proved a property the gate now depends on:
+`cgp` (separating evaluation from generation, so a model can admit it does not know),
+`transcript-forge` (a mechanical quote gate over an artifact the model did not write),
+`research-loop` (local material before the web), `context-pack` (evidence is not optional),
+`claim-synth` (deterministic routing with no model in the loop), `vault-pipeline` (integrity
+gates that only fire on new drift), and `hermes-ops` (report the one thing that is wrong).
+They are local, unpublished repositories.
+
+[`docs/ORIGINS.md`](docs/ORIGINS.md) records what each one established, what carried over, and
+what did not — so the lineage is auditable rather than asserted.
 
 MIT licensed.
