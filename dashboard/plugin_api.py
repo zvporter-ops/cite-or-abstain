@@ -35,8 +35,13 @@ _INDEX_CACHE: dict[tuple, CorpusIndex] = {}
 
 
 def _home() -> Path:
-    import os
-    return Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
+    """Profile-aware Hermes home -- the pane may be serving a profile that is not the launch one."""
+    try:
+        from hermes_constants import get_hermes_home
+        return Path(get_hermes_home())
+    except Exception:
+        import os
+        return Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
 
 
 def _settings() -> dict:
@@ -47,13 +52,19 @@ def _settings() -> dict:
 
 
 def _model_is_local(settings: dict) -> bool:
-    """The pane's audit runs through ``endpoint``, so the endpoint decides locality."""
+    """The pane's audit runs through ``endpoint``; without one, config.yaml decides.
+
+    A configured remote fallback also counts as remote: it can take over while the local
+    server is down, and the pane's answer would then be read by that model.
+    """
     endpoint = (settings.get("endpoint") or "").strip()
     if endpoint:
         return leakguard.classify(endpoint) == leakguard.LOCAL
     try:
         from hermes_cli.config import load_config_readonly
         cfg = load_config_readonly() or {}
+        if leakguard.remote_fallback(cfg):
+            return False
         base = ((cfg.get("model") or {}).get("base_url")) or ""
         return leakguard.classify(base) == leakguard.LOCAL
     except Exception:

@@ -45,25 +45,64 @@ def classify(url: str | None) -> str:
     return LOCAL if is_local_url(url) else CLOUD
 
 
-def redaction_notice(count: int, corpus_ask_local: bool = True) -> str:
+def provider_base_url(cfg: dict | None, provider: str | None) -> str:
+    """The base_url config registers for a provider, or "" when it does not say."""
+    name = str(provider or "").split(":", 1)[-1]
+    for table in ("providers", "custom_providers"):
+        entry = ((cfg or {}).get(table) or {}).get(name)
+        if isinstance(entry, dict):
+            base = str(entry.get("base_url") or "").strip()
+            if base:
+                return base
+    return ""
+
+
+def remote_fallback(cfg: dict | None) -> bool:
+    """True when a configured fallback model is not local.
+
+    A fallback takes over mid-session -- typically while the local server is down -- and the
+    same turn hook then sends internal passages to it. Unclassifiable counts as remote, the
+    way an unparseable endpoint does.
+    """
+    entries: list = []
+    for key in ("fallback_model", "fallback_providers"):
+        value = (cfg or {}).get(key) or []
+        if isinstance(value, dict):
+            value = [value]
+        if isinstance(value, list):
+            entries.extend(value)
+    for entry in entries:
+        if not isinstance(entry, dict):
+            return True
+        base = (str(entry.get("base_url") or "").strip()
+                or provider_base_url(cfg, entry.get("provider")))
+        if not base or classify(base) != LOCAL:
+            return True
+    return False
+
+
+def same_model(left: str, right: str) -> bool:
+    """Compare model names across provider prefixes: ``custom:spark/m`` is ``m``."""
+    def leaf(value: str) -> str:
+        return str(value or "").strip().lower().split("/")[-1].split(":")[-1]
+
+    a, b = leaf(left), leaf(right)
+    return bool(a) and a == b
+
+
+def redaction_notice(count: int) -> str:
     """The directive injected when private evidence must not be sent.
 
-    ``corpus_ask_local`` says whether the plugin has a local endpoint to answer through.
-    With no endpoint configured ``corpus_ask`` calls Hermes' active model -- the same
-    remote model this notice is protecting against -- so recommending it here would
-    hand the material over by another door.
+    A tool call answers into this same turn, so ``corpus_ask`` is not a way around a remote
+    model: that model reads the tool's output. The only remedy is a local model for the turn.
     """
-    head = (
+    return (
         "## CLEARANCE\n"
-        f"{count} passage(s) of internal material match this question, and the active "
-        "model is not running locally, so they have NOT been included here: sending them "
-        "to a remote provider would disclose private material.\n"
+        f"{count} passage(s) of internal material match this question, and the model this "
+        "turn reaches is not running locally, so they have NOT been included here: sending "
+        "them to a remote provider would disclose private material.\n"
         "Do not answer this question from general knowledge. Tell the user that internal "
-        "material exists but cannot be sent to this model"
-    )
-    if corpus_ask_local:
-        return head + ", and that `corpus_ask` answers it locally instead."
-    return head + (
-        ", and that answering it needs a local endpoint set in the plugin settings "
-        "(`plugins.entries.coldstart.settings.endpoint`)."
+        "material exists but cannot be sent to this model, and that answering it needs a "
+        "local model for the turn (`corpus_ask` would only hand the material to the same "
+        "remote model)."
     )

@@ -1,6 +1,6 @@
 name: coldstart
 label: Coldstart
-version: 0.3.0
+version: 0.3.1
 manifest_version: 2
 license: MIT
 homepage: https://github.com/zvporter-ops/coldstart
@@ -47,9 +47,10 @@ config_schema:
     type: str
     default: flag
     description: >-
-      off disables the output gate; flag appends an evidence report to the reply and
-      leaves streaming intact; strict withholds a reply that contains an unsupported
-      quote, figure, date, URL or identifier and substitutes a refusal.
+      off disables the output gate; flag appends an evidence report to the reply; strict
+      withholds a reply that contains an unsupported quote, figure, date, URL or identifier
+      and substitutes a refusal. Streaming is held while the plugin is enabled in every
+      mode, including flag, because the reply is inspected before it is shown.
   endpoint:
     type: str
     default: ""

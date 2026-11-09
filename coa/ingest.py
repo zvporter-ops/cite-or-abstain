@@ -8,6 +8,7 @@ than one that returns None: the index would record a document it cannot search.
 from __future__ import annotations
 
 import html
+import os
 import re
 import shutil
 import subprocess
@@ -81,12 +82,24 @@ def _office_text(path: Path) -> str | None:
     return text or None
 
 
+def _child_env() -> dict[str, str]:
+    """A minimal environment for the extractor children: no secrets, just enough to run."""
+    env = {
+        "PATH": os.environ.get("PATH") or "/usr/local/bin:/usr/bin:/bin",
+        "LANG": os.environ.get("LANG") or "C.UTF-8",
+    }
+    home = os.environ.get("HOME")
+    if home:
+        env["HOME"] = home  # tesseract wants a writable home for its cache
+    return env
+
+
 def _pdf_text(path: Path) -> str | None:
     binary = shutil.which("pdftotext")
     if not binary:
         return None
     result = subprocess.run([binary, "-q", "-layout", str(path), "-"],
-                            capture_output=True, timeout=60)
+                            capture_output=True, timeout=60, env=_child_env())
     if result.returncode != 0:
         return None
     return result.stdout.decode("utf-8", "replace") or None
@@ -97,7 +110,7 @@ def _ocr_text(path: Path) -> str | None:
     if not binary:
         return None
     result = subprocess.run([binary, str(path), "stdout"],
-                            capture_output=True, timeout=120)
+                            capture_output=True, timeout=120, env=_child_env())
     if result.returncode != 0:
         return None
     return result.stdout.decode("utf-8", "replace") or None

@@ -47,11 +47,24 @@ _LOCK = threading.RLock()
 _INDEX: CorpusIndex | None = None
 _LAST: dict[str, dict] = {}
 _STRICTNESS: dict[str, str] = {}
+# Which model each session's turn actually reaches. ``/model`` is session-scoped and a
+# fallback can take over mid-turn, so config.yaml alone cannot answer "is this local?".
+_TURN_MODEL: dict[str, str] = {}
 _CTX = None
 
 
 def _hermes_home() -> Path:
-    return Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
+    """Profile-aware Hermes home: a gateway can serve several profiles at once.
+
+    ``HERMES_HOME`` alone is the launch profile's home, so using it would let profile B's
+    index land in profile A's directory. ``hermes_constants`` resolves the context-local
+    override first, then the environment, then the platform default.
+    """
+    try:
+        from hermes_constants import get_hermes_home
+        return Path(get_hermes_home())
+    except Exception:  # a plugin loaded outside the host still works
+        return Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
 
 
 def _data_dir() -> Path:
@@ -123,28 +136,48 @@ def _llm():
     return ctx_llm(_CTX)
 
 
-def _session_is_local() -> bool:
-    """Where does the active model live? Unclassified counts as remote (fail closed)."""
+def _load_config() -> dict:
+    """config.yaml as a dict. A missing or broken config means nothing is trusted."""
     try:
         from hermes_cli.config import load_config_readonly
-        cfg = load_config_readonly() or {}
-        base = ((cfg.get("model") or {}).get("base_url")) or ""
-        return leakguard.classify(base) == leakguard.LOCAL
+        return load_config_readonly() or {}
     except Exception:
+        return {}
+
+
+def _turn_is_local(session_id: str = "", model: str = "") -> bool:
+    """Where the model this turn actually reaches lives -- not only what config.yaml names.
+
+    Fail closed on the three things config.yaml alone cannot see: a session switched with
+    ``/model``, a configured fallback that is not local, and a model this plugin cannot
+    classify. The hook passes the turn's model; the tools ask about a recorded session.
+    """
+    cfg = _load_config()
+    if leakguard.classify(str((cfg.get("model") or {}).get("base_url") or "")) != leakguard.LOCAL:
         return False
+    if leakguard.remote_fallback(cfg):
+        return False
+    configured = str((cfg.get("model") or {}).get("default")
+                     or (cfg.get("model") or {}).get("name") or "")
+    seen = model or _TURN_MODEL.get(session_id, "")
+    if seen:
+        return bool(configured) and leakguard.same_model(seen, configured)
+    return True  # nothing attested: config.yaml is all there is to go on
 
 
-def _model_is_local() -> bool:
-    """Is the model this plugin will actually call local?
+def _tool_is_local(session_id: str = "") -> bool:
+    """Both hops decide: the endpoint the tool calls, and the turn its answer lands in.
 
-    With an ``endpoint`` configured the plugin calls that endpoint, so the endpoint decides;
-    otherwise it calls Hermes' active model. This is the one question the clearance rule
-    needs, and every path that touches internal material asks it here rather than guessing.
+    A local endpoint is not enough -- the result is read by the turn's model, so that model
+    must be local too. With no attested turn the plugin fails closed: it cannot show that
+    the model reading the tool's output is local, so internal passages stay out.
     """
     endpoint = _cfg().get("endpoint") or ""
-    if endpoint:
-        return leakguard.classify(endpoint) == leakguard.LOCAL
-    return _session_is_local()
+    if endpoint and leakguard.classify(endpoint) != leakguard.LOCAL:
+        return False
+    if session_id and session_id in _TURN_MODEL:
+        return _turn_is_local(session_id, _TURN_MODEL[session_id])
+    return False
 
 
 def _normalize_mode(value) -> str:
@@ -205,6 +238,11 @@ def _looks_like_question(message: str) -> bool:
 def on_pre_llm_call(session_id: str = "", user_message: str = "", **kwargs):
     """Retrieve tiered evidence and inject it; never raise into the turn."""
     try:
+        # The model this turn reaches, as the host reports it -- not what config.yaml says.
+        model = str(kwargs.get("model") or "")
+        if model:
+            _TURN_MODEL[session_id] = model
+
         if not _looks_like_question(user_message):
             return None
         index = _index()
@@ -215,7 +253,7 @@ def on_pre_llm_call(session_id: str = "", user_message: str = "", **kwargs):
         floor = _cfg().get("internal_relevance", 0.6)
         internal = [p for p in internal_all if relevance(user_message, p) >= floor]
         public = index.retrieve(user_message, k=4, tier=PUBLIC)
-        local = _session_is_local()
+        local = _turn_is_local(session_id, model)
 
         # Clearance rule: internal material never travels to a remote model.
         if internal and not local:
@@ -225,8 +263,7 @@ def on_pre_llm_call(session_id: str = "", user_message: str = "", **kwargs):
                 "internal_withheld": len(internal),
                 "allow_public": True,
             }
-            return {"context": leakguard.redaction_notice(
-                len(internal), corpus_ask_local=_model_is_local())}
+            return {"context": leakguard.redaction_notice(len(internal))}
 
         passages = internal + public
         _LAST[session_id] = {
@@ -279,15 +316,12 @@ def on_transform_llm_output(response_text: str = "", session_id: str = "", **kwa
         _record_gate(session_id, report, mode, withheld)
 
         if withheld and mode == "strict":
-            hint = ("Use `corpus_ask`, which answers it against the local endpoint."
-                    if _model_is_local() else
-                    "To answer it locally, set a local endpoint in the plugin settings "
-                    "(`plugins.entries.coldstart.settings.endpoint`); without one, "
-                    "`corpus_ask` would call this same remote model.")
             return (
                 "I can't answer that here. Internal material matches this question, and "
                 "the active model is not running locally, so the material was withheld "
-                "rather than sent to a remote provider. " + hint
+                "rather than sent to a remote provider. Run the turn on a local model and "
+                "ask again -- a tool call answers into this same turn, so routing it "
+                "through `corpus_ask` would hand the material to the same remote model."
             )
 
         if mode == "strict" and not report.ok:
@@ -321,10 +355,9 @@ def _tool_corpus_ask(args: dict, **kwargs) -> str:
     if index is None:
         return json.dumps({"error": "no corpus configured; set corpus_roots in the plugin settings"})
     cfg = _cfg()
-    # This tool calls the same model as the turn unless an endpoint is configured, so the
-    # clearance rule applies here too: private passages stay out of a non-local model's
-    # context, and the run falls back to the public tier.
-    internal_allowed = _model_is_local()
+    # A tool's answer lands in the turn, so the turn's model decides: private passages stay
+    # out of a non-local turn, and the run falls back to the public tier.
+    internal_allowed = _tool_is_local(kwargs.get("session_id") or "")
     try:
         run = orchestrator(question, index, _llm(),
                            domain=args.get("domain") or cfg["domain"],
@@ -372,13 +405,13 @@ def _tool_evidence_report(args: dict, **kwargs) -> str:
                                  allow_public=bool(entry.get("allow_public"))).to_dict())
 
 
-def _trust_report() -> dict:
+def _trust_report(session_id: str = "") -> dict:
     """Run the scorecard against this deployment."""
     index = _index()
     if index is None:
         return {"error": "no corpus configured"}
     cfg = _cfg()
-    internal_allowed = _model_is_local()
+    internal_allowed = _tool_is_local(session_id)
     # The gate probes sample internal passages, so an audit against a non-local model would
     # ship private text to it. Refuse instead of quietly scoring the public tier, which
     # would report a number for a deployment this plugin will not actually run.
@@ -467,7 +500,7 @@ def _cmd_ground(raw_args: str, **kwargs) -> str:
 
 
 def _cmd_trust(raw_args: str, **kwargs) -> str:
-    return audit_mod.render(_trust_report())
+    return audit_mod.render(_trust_report(kwargs.get("session_id") or ""))
 
 
 def register(ctx) -> None:
@@ -483,7 +516,7 @@ def register(ctx) -> None:
                       _tool_evidence_report, check_fn=available,
                       description="Verify a reply against retrieved evidence.")
     ctx.register_tool("corpus_audit", "coldstart", AUDIT_SCHEMA,
-                      lambda args, **kw: json.dumps(_trust_report()),
+                      lambda args, **kw: json.dumps(_trust_report(kw.get("session_id") or "")),
                       check_fn=available,
                       description="Score the deployment's trustworthiness.")
 

@@ -33,7 +33,7 @@ tier: community
 category: tools
 requires_hermes: ">=0.22.0"
 docs_url: https://github.com/zvporter-ops/coldstart#readme
-version: "0.3.0"
+version: "0.3.1"
 readme: true
 platforms: []
 capabilities:

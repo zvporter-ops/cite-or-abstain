@@ -66,18 +66,26 @@ that turn actually retrieved:
 - claims resting only on public material are disclosed as such;
 - prose with weak support is reported as a soft flag, never blocking.
 
-**Clearance rule** — if internal material matches the question and the active model is not
-running locally, the material is withheld and the model is told to say so. A cloud model
-never receives your private text. Local means loopback, RFC1918, Tailscale CGNAT
-(`100.64.0.0/10`) or a `.local`/`.lan`/`.internal` name; anything unclassified counts as
-remote, because failing closed is the only safe default.
+**Clearance rule** — if internal material matches the question and the model this turn
+actually reaches is not running locally, the material is withheld and the model is told to
+say so. A cloud model never receives your private text. Local means loopback, RFC1918,
+Tailscale CGNAT (`100.64.0.0/10`) or a `.local`/`.lan`/`.internal` name; anything
+unclassified counts as remote, because failing closed is the only safe default.
 
-The rule covers every path that touches your material, not just the turn: `corpus_ask`
-answers from public material only when the model it would call is not local, `corpus_audit`
-and `/trust` refuse rather than sample internal passages into a remote model, and the
-clearance notice only points at `corpus_ask` when a local `endpoint` exists to answer
-through. With no `endpoint` set, the plugin calls your session model, so a cloud session
-gets public answers and an honest refusal — never your documents.
+"Which model" is answered from the turn, not only from `config.yaml`. `pre_llm_call` is told
+the model the host is about to call, and the plugin records it per session, so a session
+switched with `/model` — or a turn that lands on a cloud entry from `fallback_model` /
+`fallback_providers` because your local server went down — is treated as remote. A single
+non-local fallback anywhere in the config makes every turn remote, because the plugin cannot
+tell whether the fallback is the one answering.
+
+The rule covers every path that touches your material, not just the turn. `corpus_ask` and
+`corpus_audit` require **both hops** to be local: the endpoint the tool calls, and the turn
+its model answer lands in. With no attested turn they refuse, since nothing then shows the
+model reading the tool's output is local. `/trust` does the same. The clearance notice never
+points at `corpus_ask` as a way around a remote model — a tool call answers into the same
+turn, so it would hand the material to that model anyway; the only remedy it names is a
+local model for the turn.
 
 ## Trust scorecard
 
