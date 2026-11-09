@@ -28,6 +28,11 @@ look plausible. Asking the model to check itself does not work — a model asked
 its own answer defends it. So the check has to live outside the model, and it has to be
 mechanical enough that you can read the code and know what it does.
 
+The name is the state it is built for. A cold start is a deployment with nothing of yours
+behind it yet — and that is exactly where a model is most willing to invent. Coldstart
+makes that state visible instead of hiding it, then shows you the moment it stops being
+true.
+
 ## The hierarchy: internal > public > refuse
 
 Every passage carries a tier.
