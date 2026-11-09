@@ -4,8 +4,8 @@ Deadline: **Nov 11 2026, 5:00 PM EST**.
 
 | # | Step | State |
 |---|---|---|
-| 1 | Public repo at a 40-char SHA | done — https://github.com/zvporter-ops/coldstart at `24848d56ba438ed5d3697d7279e003a104e21bed` |
-| 2 | `hermes plugins validate` green at that SHA | done — passed at `24848d5` (security scan safe) |
+| 1 | Public repo at a 40-char SHA | done — https://github.com/zvporter-ops/coldstart (pinned SHA recorded in the catalog PR) |
+| 2 | `hermes plugins validate` green at that SHA | done — passed, security scan safe |
 | 3 | Catalog entry `plugin-catalog/coldstart.yaml` | PR open: https://github.com/NousResearch/hermes-agent/pull/150323 |
 | 4 | Demo video, under 90s, plugin shown working | script in `docs/demo-script.md`; needs recording |
 | 5 | Post on X tagging @NousResearch | pending |
