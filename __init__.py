@@ -13,6 +13,11 @@ Two gates and one clearance rule:
                          score: does it abstain when it should, catch what it should,
                          and leave legitimate paraphrase alone.
 
+Standing rules ride on the same two hooks. A correction is recorded as a rule by
+``transform_llm_output``, promoted to *hard* when it is stated again, and injected at the
+start of every turn by ``pre_llm_call`` -- because a correction the user has to repeat is
+a save that did not take, not a personality quirk. ``/rules`` lists them.
+
 The model is never asked to grade its own answer. A model asked to police itself
 defends itself; the gate is mechanical, so it cannot be talked out of a violation.
 """
@@ -28,6 +33,7 @@ from pathlib import Path
 
 from .coa import audit as audit_mod
 from .coa import leakguard
+from .coa import rules as rules_mod
 from .coa.claimgate import check as gate_check, render_report
 from .coa.corpus import (
     INTERNAL, PUBLIC, CorpusIndex, normalize_roots, relevance,
@@ -37,16 +43,24 @@ from .coa.pipeline import orchestrator, render
 
 logger = logging.getLogger(__name__)
 
-_QUESTION_STARTS = (
-    "what", "why", "how", "when", "where", "who", "which", "does", "do", "is",
-    "are", "can", "could", "should", "would", "will", "was", "were", "tell me",
-    "explain", "summarize", "summarise", "find", "show",
-)
+# One list, shared with the correction ledger, so "is this a question?" cannot drift
+# between the evidence gate and the rule detector.
+_QUESTION_STARTS = rules_mod.QUESTION_STARTS
 
 _LOCK = threading.RLock()
 _INDEX: CorpusIndex | None = None
 _LAST: dict[str, dict] = {}
 _STRICTNESS: dict[str, str] = {}
+# The user's message, kept separately from ``_LAST`` so the correction ledger sees every
+# turn while the evidence gate keeps its current meaning (an entry means "this turn
+# retrieved evidence", and non-question turns must not start getting evidence reports).
+_LAST_MSG: dict[str, str] = {}
+# Turn bookkeeping for the ledger: a turn's reply may pass through the transform more than
+# once, but the same correction stated in a *later* turn must be counted again -- that is
+# exactly the repetition the ledger exists to detect.
+_TURN: dict[str, int] = {}
+_TURN_DONE: dict[str, int] = {}
+_RULES: rules_mod.RuleStore | None = None
 _CTX = None
 
 
@@ -75,7 +89,35 @@ def _cfg() -> dict:
         "max_evidence_chars": int(_CTX.get_config("max_evidence_chars", 6000) or 6000),
         "min_overlap": float(_CTX.get_config("min_overlap", 0.25) or 0.25),
         "internal_relevance": float(_CTX.get_config("internal_relevance", 0.6) or 0.6),
+        "rules_enabled": _CTX.get_config("rules_enabled", True),
+        "rules_max_chars": int(_num(_CTX.get_config("rules_max_chars", 1200), 1200)),
+        "rule_overlap": _num(_CTX.get_config("rule_overlap", 0.6), 0.6),
     }
+
+
+def _num(value, default: float) -> float:
+    """Config can hand back a string, a bool or None; a bad value must not break a turn."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _rules_enabled() -> bool:
+    """``hermes config set ... rules_enabled false`` writes a YAML boolean, not "false"."""
+    value = _cfg().get("rules_enabled", True)
+    if isinstance(value, str):
+        return value.strip().lower() not in ("off", "false", "no", "0", "")
+    return bool(value)
+
+
+def _rules_store() -> rules_mod.RuleStore:
+    global _RULES
+    with _LOCK:
+        if _RULES is None:
+            _RULES = rules_mod.RuleStore(_data_dir() / "rules.json",
+                                         overlap=_cfg().get("rule_overlap", 0.6))
+        return _RULES
 
 
 def _sources() -> list[dict]:
@@ -199,17 +241,64 @@ def _looks_like_question(message: str) -> bool:
     return text.endswith("?") or text.startswith(_QUESTION_STARTS)
 
 
+def _append_notice(text: str, notice: str) -> str:
+    """Put the rule notice on its own block instead of gluing it to the last line."""
+    if not notice:
+        return text
+    return text.rstrip() + "\n\n" + notice
+
+
+def _capture_rule(session_id: str) -> str:
+    """Record a correction as a standing rule; return the one-line notice, if any."""
+    if not _rules_enabled():
+        return ""
+    message = _LAST_MSG.get(session_id) or ""
+    if not message:
+        return ""
+    turn = _TURN.get(session_id, 0)
+    if _TURN_DONE.get(session_id) == turn:
+        return ""
+    rule_text = rules_mod.detect_correction(message)
+    if not rule_text:
+        _TURN_DONE[session_id] = turn
+        return ""
+    _TURN_DONE[session_id] = turn
+    outcome = _rules_store().add(rule_text, session=session_id)
+    logger.info("coldstart rule %s %s: %s", outcome.rule.get("id"),
+                "created" if outcome.created else
+                ("escalated to hard" if outcome.escalated else "restated"),
+                outcome.rule.get("text"))
+    return rules_mod.render_notice(outcome)
+
+
 # --------------------------------------------------------------------- hooks
 
 
 def on_pre_llm_call(session_id: str = "", user_message: str = "", **kwargs):
-    """Retrieve tiered evidence and inject it; never raise into the turn."""
+    """Inject standing rules, then tiered evidence; never raise into the turn."""
     try:
+        # Kept even when this turn is not a question: the correction ledger runs on the
+        # finished reply and needs the message that produced it.
+        _LAST_MSG[session_id] = user_message or ""
+        _TURN[session_id] = _TURN.get(session_id, 0) + 1
+
+        rules_block = ""
+        try:
+            if _rules_enabled():
+                rules_block = rules_mod.render_injection(
+                    _rules_store().rules(),
+                    max_chars=_cfg().get("rules_max_chars", 1200))
+        except Exception as exc:  # a broken rule store must not break the turn
+            logger.debug("coldstart rules injection skipped: %s", exc)
+
+        def with_rules(block: str) -> str:
+            return f"{rules_block}\n\n{block}" if rules_block else block
+
         if not _looks_like_question(user_message):
-            return None
+            return {"context": rules_block} if rules_block else None
         index = _index()
         if index is None:
-            return None
+            return {"context": rules_block} if rules_block else None
 
         internal_all = index.retrieve(user_message, k=4, tier=INTERNAL)
         floor = _cfg().get("internal_relevance", 0.6)
@@ -225,8 +314,8 @@ def on_pre_llm_call(session_id: str = "", user_message: str = "", **kwargs):
                 "internal_withheld": len(internal),
                 "allow_public": True,
             }
-            return {"context": leakguard.redaction_notice(
-                len(internal), corpus_ask_local=_model_is_local())}
+            return {"context": with_rules(leakguard.redaction_notice(
+                len(internal), corpus_ask_local=_model_is_local()))}
 
         passages = internal + public
         _LAST[session_id] = {
@@ -236,7 +325,7 @@ def on_pre_llm_call(session_id: str = "", user_message: str = "", **kwargs):
             "allow_public": not internal,
         }
         if not passages:
-            return {"context": (
+            return {"context": with_rules(
                 "## EVIDENCE GATE\n"
                 "No internal or public material covers this question. Do not answer it "
                 "from general knowledge, and do not include figures, dates, quotations "
@@ -253,7 +342,7 @@ def on_pre_llm_call(session_id: str = "", user_message: str = "", **kwargs):
             "No internal material covers this question. If you answer, say clearly that "
             "it rests on public material."
         )
-        return {"context": (
+        return {"context": with_rules(
             "## EVIDENCE (tiered: internal outranks public)\n"
             f"{block}\n\n{precedence} Cite the passage ids you used."
         )}
@@ -263,14 +352,22 @@ def on_pre_llm_call(session_id: str = "", user_message: str = "", **kwargs):
 
 
 def on_transform_llm_output(response_text: str = "", session_id: str = "", **kwargs):
-    """Gate the finished reply against the turn's tiered evidence."""
+    """Record any correction, then gate the finished reply against the turn's evidence."""
     try:
+        notice = ""
+        try:
+            notice = _capture_rule(session_id)
+        except Exception as exc:  # the ledger must not break the reply
+            logger.warning("coldstart rule capture failed: %s", exc)
+
         mode = _strictness(session_id)
-        if mode == "off" or not response_text:
+        if not response_text:
             return None
+        if mode == "off":
+            return _append_notice(response_text, notice) if notice else None
         entry = _LAST.get(session_id)
         if not entry:
-            return None
+            return _append_notice(response_text, notice) if notice else None
 
         withheld = int(entry.get("internal_withheld") or 0)
         passages = entry.get("passages") or []
@@ -284,16 +381,15 @@ def on_transform_llm_output(response_text: str = "", session_id: str = "", **kwa
                     "To answer it locally, set a local endpoint in the plugin settings "
                     "(`plugins.entries.coldstart.settings.endpoint`); without one, "
                     "`corpus_ask` would call this same remote model.")
-            return (
+            return _append_notice(
                 "I can't answer that here. Internal material matches this question, and "
                 "the active model is not running locally, so the material was withheld "
-                "rather than sent to a remote provider. " + hint
-            )
+                "rather than sent to a remote provider. " + hint, notice)
 
         if mode == "strict" and not report.ok:
             kinds = sorted({f.kind for f in report.violations})
             what = " and ".join(kinds)
-            return (
+            reply = (
                 f"I can't answer that from your corpus. The draft reply relied on {what} "
                 "that the retrieved evidence does not contain, so it is withheld rather "
                 "than passed on unverified. "
@@ -302,9 +398,10 @@ def on_transform_llm_output(response_text: str = "", session_id: str = "", **kwa
                    "No passage covers this question, so nothing in the reply could be "
                    "verified against it.")
             )
+            return _append_notice(reply, notice)
         if not passages and not report.findings:
-            return None
-        return response_text + render_report(report)
+            return notice or None
+        return _append_notice(response_text + render_report(report), notice)
     except Exception as exc:
         logger.warning("coldstart transform_llm_output failed: %s", exc)
         return None
@@ -470,6 +567,41 @@ def _cmd_trust(raw_args: str, **kwargs) -> str:
     return audit_mod.render(_trust_report())
 
 
+def _cmd_rules(raw_args: str, **kwargs) -> str:
+    """List the captured rules, or forget / promote one by id."""
+    store = _rules_store()
+    args = (raw_args or "").strip().split()
+    if not args:
+        rules = store.rules()
+        if not rules:
+            return ("No rules captured yet. Correct me once and it becomes a rule; state "
+                    "the same correction again and it becomes hard and is injected into "
+                    "every turn.")
+        lines = ["Captured rules (hard rules are injected into every turn):"]
+        for rule in rules:
+            mark = "[hard] " if rule.get("hard") else ""
+            lines.append(f"  {rule.get('id')}. {mark}{rule.get('text')} "
+                         f"(stated {rule.get('hits', 1)}x)")
+        lines.append("Use /rules forget <id> to drop one, /rules hard <id> to promote one.")
+        return "\n".join(lines)
+    verb = args[0].lower()
+    if verb in ("forget", "drop", "remove"):
+        try:
+            rule_id = int(args[1])
+        except (IndexError, ValueError):
+            return "Usage: /rules forget <id>"
+        return (f"Rule {rule_id} forgotten." if store.forget(rule_id)
+                else f"No rule {rule_id}.")
+    if verb in ("hard", "promote"):
+        try:
+            rule_id = int(args[1])
+        except (IndexError, ValueError):
+            return "Usage: /rules hard <id>"
+        return (f"Rule {rule_id} is hard now: it is injected into every turn."
+                if store.set_hard(rule_id) else f"No rule {rule_id}.")
+    return "Usage: /rules | /rules forget <id> | /rules hard <id>"
+
+
 def register(ctx) -> None:
     global _CTX
     _CTX = ctx
@@ -498,6 +630,9 @@ def register(ctx) -> None:
                          args_hint="<off|flag|strict>")
     ctx.register_command("trust", _cmd_trust,
                          description="Run the trust battery and score this deployment")
+    ctx.register_command("rules", _cmd_rules,
+                         description="List captured standing rules; forget or promote one",
+                         args_hint="[forget|hard <id>]")
 
     skill = Path(__file__).parent / "skills" / "confidence-gated-pipeline" / "SKILL.md"
     if skill.exists():

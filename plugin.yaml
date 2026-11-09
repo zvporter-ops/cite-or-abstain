@@ -1,6 +1,6 @@
 name: coldstart
 label: Coldstart
-version: 0.3.0
+version: 0.4.0
 manifest_version: 2
 license: MIT
 homepage: https://github.com/zvporter-ops/coldstart
@@ -16,7 +16,10 @@ description: >-
   `/trust` all obey that one rule, and `corpus_ask` falls back to public material rather
   than forward your documents to a remote model. `/trust` scores the deployment. No
   embeddings, no dependency beyond the standard library, and no model is ever asked to
-  grade its own answer.
+  grade its own answer. The same discipline covers how the agent behaves: a correction
+  becomes a standing rule, stating it again promotes it to hard, and hard rules are
+  injected into every turn so the user does not have to repeat themselves. `/rules` lists
+  them.
 requires_hermes: ">=0.22.0"
 provides_tools:
   - corpus_ask
@@ -81,3 +84,21 @@ config_schema:
       Share of a question's content words an internal passage must cover before the
       question counts as answered by internal material. Higher means stricter: fewer
       questions are treated as covered, so more answers fall back to public material.
+  rules_enabled:
+    type: bool
+    default: true
+    description: >-
+      Record corrections as standing rules and inject them into every turn. A correction
+      the user has to repeat is a defect, so stating the same rule twice promotes it to
+      hard. Turn off to keep only the document evidence gate.
+  rules_max_chars:
+    type: int
+    default: 1200
+    description: "Upper bound on the standing-rules block injected into a turn."
+  rule_overlap:
+    type: float
+    default: 0.6
+    description: >-
+      Share of the shorter rule's content words two corrections must have in common to
+      count as the same rule. Raise it to capture more variants as distinct rules, lower
+      it to merge paraphrases sooner.

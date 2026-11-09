@@ -328,5 +328,127 @@ class TestModeNormalization(HookTestCase):
         self.assertNotIn("False", message)
 
 
+class TestCorrectionLedger(HookTestCase):
+    """A correction becomes a rule; stating it again makes it hard and injected.
+
+    This is the "never make me say it three times" layer: capture has to work on turns
+    that are not questions (corrections rarely are), it has to survive the evidence gate
+    being off, and repetition has to be detectable across turns.
+    """
+
+    def setUp(self):
+        super().setUp()
+        PLUGIN._RULES = None
+        PLUGIN._LAST_MSG.clear()
+        PLUGIN._TURN.clear()
+        PLUGIN._TURN_DONE.clear()
+
+    def tearDown(self):
+        PLUGIN._RULES = None
+        PLUGIN._LAST_MSG.clear()
+        PLUGIN._TURN.clear()
+        PLUGIN._TURN_DONE.clear()
+        super().tearDown()
+
+    CORRECTION = "no, use plain language and drop the hedging footer"
+
+    def test_a_correction_is_captured_and_announced(self):
+        self.pre(self.CORRECTION)
+        reply = self.post("Understood.")
+        self.assertIn("Rule 1 saved", reply)
+        self.assertIn("plain language", reply)
+        self.assertEqual(len(PLUGIN._rules_store().rules()), 1)
+
+    def test_the_notice_is_its_own_block(self):
+        self.pre(self.CORRECTION)
+        reply = self.post("Understood.")
+        self.assertIn("Understood.\n\n---\nRule 1 saved", reply)
+
+    def test_capture_works_while_the_evidence_gate_is_off(self):
+        PLUGIN._CTX.set_config("strictness", False)
+        self.pre(self.CORRECTION)
+        reply = self.post("Understood.")
+        self.assertIn("Rule 1 saved", reply)
+
+    def test_the_same_correction_twice_escalates_to_hard(self):
+        self.pre(self.CORRECTION)
+        self.post("Understood.")
+        self.pre(self.CORRECTION)
+        reply = self.post("Understood.")
+        self.assertIn("hard", reply.lower())
+        self.assertIn("stated before", reply.lower())
+        self.assertTrue(PLUGIN._rules_store().rules()[0]["hard"])
+
+    def test_a_hard_rule_is_injected_into_the_next_turn(self):
+        self.pre(self.CORRECTION)
+        self.post("Understood.")
+        self.pre(self.CORRECTION)
+        self.post("Understood.")
+        result = self.pre("What is the Project Falcon budget?")
+        self.assertIn("STANDING RULES", result["context"])
+        self.assertIn("plain language", result["context"])
+        self.assertIn("EVIDENCE", result["context"])
+
+    def test_rules_are_injected_even_when_the_corpus_is_empty(self):
+        PLUGIN._CTX.set_config("corpus_roots", [])
+        PLUGIN._CTX.set_config("public_roots", [])
+        PLUGIN._INDEX = None
+        self.pre(self.CORRECTION)
+        self.post("Understood.")
+        result = self.pre("thanks")
+        self.assertIn("STANDING RULES", result["context"])
+
+    def test_a_question_is_not_captured(self):
+        self.pre("What is the Project Falcon budget?")
+        reply = self.post("The Project Falcon budget is 250000.")
+        self.assertNotIn("Rule 1", reply)
+        self.assertIn("Evidence gate", reply)
+        self.assertEqual(PLUGIN._rules_store().rules(), [])
+
+    def test_an_ordinary_statement_is_not_captured(self):
+        self.pre("The Project Falcon budget is 250000.")
+        reply = self.post("Noted.")
+        self.assertIsNone(reply)
+        self.assertEqual(PLUGIN._rules_store().rules(), [])
+
+    def test_one_turn_is_counted_once(self):
+        self.pre(self.CORRECTION)
+        self.post("Understood.")
+        self.post("Understood again.")
+        rules = PLUGIN._rules_store().rules()
+        self.assertEqual(len(rules), 1)
+        self.assertEqual(rules[0]["hits"], 1)
+
+    def test_capture_can_be_turned_off(self):
+        PLUGIN._CTX.set_config("rules_enabled", False)
+        self.pre(self.CORRECTION)
+        self.assertIsNone(self.post("Understood."))
+        self.assertEqual(PLUGIN._rules_store().rules(), [])
+
+    def test_rules_survive_a_fresh_store(self):
+        self.pre(self.CORRECTION)
+        self.post("Understood.")
+        PLUGIN._RULES = None
+        result = self.pre("What is the Project Falcon budget?")
+        self.assertIn("plain language", result["context"])
+
+    def test_the_rules_command_lists_and_forgets(self):
+        self.pre(self.CORRECTION)
+        self.post("Understood.")
+        listing = PLUGIN._cmd_rules("")
+        self.assertIn("plain language", listing)
+        self.assertIn("Rule 1 forgotten", PLUGIN._cmd_rules("forget 1"))
+        self.assertEqual(PLUGIN._rules_store().rules(), [])
+
+    def test_the_rules_command_reports_an_empty_store(self):
+        self.assertIn("No rules captured yet", PLUGIN._cmd_rules(""))
+
+    def test_the_rules_command_promotes(self):
+        self.pre(self.CORRECTION)
+        self.post("Understood.")
+        self.assertIn("hard", PLUGIN._cmd_rules("hard 1").lower())
+        self.assertTrue(PLUGIN._rules_store().rules()[0]["hard"])
+
+
 if __name__ == "__main__":
     unittest.main()

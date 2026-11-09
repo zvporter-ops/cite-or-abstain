@@ -33,6 +33,38 @@ behind it yet — and that is exactly where a model is most willing to invent. C
 makes that state visible instead of hiding it, then shows you the moment it stops being
 true.
 
+## Standing rules: a correction is a defect
+
+The document gate answers *what does it know*. This answers *how does it behave*, and it
+starts empty in the same way.
+
+A correction you have to repeat is not a personality quirk — it is a save that did not
+take. So Coldstart records corrections:
+
+```
+You:  no, use plain language and drop the hedging footer
+It:   Understood.
+      ---
+      Rule 1 saved: use plain language and drop the hedging footer
+```
+
+State the same thing again and the rule becomes **hard**, because the first save failed:
+
+```
+      ---
+      Rule 1 is hard now: use plain language and drop the hedging footer
+      It had been stated before, so the earlier save did not take.
+      It is injected into every turn from here on.
+```
+
+Hard rules are injected at the start of every turn, under a character budget
+(`rules_max_chars`), ahead of any retrieved evidence. Detection is deliberately
+conservative: a question, a bare "thanks", or an ordinary statement never becomes a rule,
+because a false positive injects an instruction the user never gave.
+
+`/rules` lists what has been captured, `/rules forget <id>` drops one, `/rules hard <id>`
+promotes one. `rules_enabled: false` turns the ledger off and leaves only the document gate.
+
 ## The hierarchy: internal > public > refuse
 
 Every passage carries a tier.
