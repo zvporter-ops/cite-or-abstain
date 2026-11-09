@@ -7,11 +7,20 @@ the user never stated, which is worse than missing one.
 
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
 
-from coa.rules import RuleStore, detect_correction, render_injection, render_notice
+from coa.rules import (
+    RuleStore,
+    detect_correction,
+    extract_rules,
+    import_standing,
+    provenance_rank,
+    render_injection,
+    render_notice,
+)
 
 
 class TestDetection(unittest.TestCase):
@@ -173,6 +182,150 @@ class TestRendering(unittest.TestCase):
         notice = render_notice(outcome)
         self.assertIn("hard", notice.lower())
         self.assertIn("stated before", notice.lower())
+
+
+class TestProvenance(unittest.TestCase):
+    """Who said it decides what wins. A note the user wrote earlier yields to a fresh word."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.root = Path(self.dir.name)
+        self.store = RuleStore(self.root / "rules.json")
+
+    def test_the_rank_ladder(self):
+        self.assertGreater(provenance_rank({"provenance": "user_stated"}),
+                           provenance_rank({"provenance": "imported"}))
+        self.assertGreater(provenance_rank({"provenance": "imported"}),
+                           provenance_rank({"provenance": "config"}))
+        self.assertEqual(provenance_rank({}), 3)  # an unlabelled rule is treated as stated
+
+    def test_a_constraint_inside_a_rule_is_not_a_reversal(self):
+        self.store.add("always answer in plain english, no filler", provenance="imported")
+        outcome = self.store.add("always answer in plain english and keep it short")
+        self.assertFalse(outcome.created)  # same instruction, so it merges
+        self.assertEqual(outcome.rule["provenance"], "user_stated")
+
+    def test_a_reversal_by_the_user_suppresses_the_imported_note(self):
+        self.store.add("never use bullet lists in answers", provenance="imported")
+        self.store.add("always use bullet lists in answers")
+        imported = self.store.rules()[0]
+        self.assertEqual(imported["superseded_by"], 2)
+        block = render_injection(self.store.rules())
+        self.assertIn("always use bullet lists", block)
+        self.assertNotIn("never use bullet lists", block)
+
+    def test_a_restatement_keeps_the_higher_ranked_wording(self):
+        self.store.add("always keep answers short and plain", provenance="imported")
+        outcome = self.store.add("always keep answers short plain and free of filler")
+        self.assertEqual(outcome.rule["provenance"], "user_stated")
+        self.assertEqual(outcome.rule["text"],
+                         "always keep answers short plain and free of filler")
+
+    def test_a_suppressed_rule_comes_back_when_the_winner_is_forgotten(self):
+        self.store.add("never use bullet lists in answers", provenance="imported")
+        self.store.add("always use bullet lists in answers")
+        self.assertEqual(self.store.rules()[0]["superseded_by"], 2)
+        self.store.forget(2)
+        self.assertNotIn("superseded_by", self.store.rules()[0])
+        self.assertIn("never use bullet lists", render_injection(self.store.rules()))
+
+    def test_an_imported_note_never_hardens_by_repetition(self):
+        self.store.add("always keep the answers short and plain", provenance="imported")
+        outcome = self.store.add("always keep the answers short and plain", provenance="imported")
+        self.assertFalse(outcome.escalated)
+        self.assertFalse(outcome.rule["hard"])
+
+    def test_the_user_restating_an_imported_note_makes_it_hard(self):
+        self.store.add("always keep the answers short and plain", provenance="imported")
+        outcome = self.store.add("always keep the answers short and plain")
+        self.assertEqual(outcome.rule["provenance"], "user_stated")
+        self.assertTrue(outcome.rule["hard"])
+        self.assertTrue(outcome.escalated)
+        self.assertTrue(outcome.upgraded)
+        self.assertIn("already in your standing files", render_notice(outcome))
+
+    def test_stated_rules_are_rendered_before_imported_ones(self):
+        self.store.add("always write in plain english for every answer", provenance="imported")
+        self.store.add("never use bullet lists when a paragraph will do")
+        block = render_injection(self.store.rules())
+        self.assertLess(block.index("bullet lists"), block.index("plain english"))
+        self.assertIn("[imported]", block)
+
+    def test_an_imported_rule_carries_its_tag(self):
+        self.store.add("always run the tests before saying done", provenance="imported")
+        self.assertIn("- [imported] always run the tests", render_injection(self.store.rules()))
+
+
+class TestImport(unittest.TestCase):
+    """A cold start is not an empty start: instruction bullets the user already wrote are read."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.root = Path(self.dir.name)
+        self.store = RuleStore(self.root / "rules.json")
+
+    def _write(self, name, text):
+        path = self.root / name
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_instruction_bullets_are_taken_and_prose_is_not(self):
+        text = ("# Conventions\n\n"
+                "- Always run the tests before you say done.\n"
+                "- The project is called Falcon.\n"
+                "* Never push straight to master without a review.\n"
+                "\n"
+                "This paragraph is prose, not a rule, and must not be imported at all.\n")
+        found = extract_rules(text)
+        self.assertEqual(found, ["Always run the tests before you say done.",
+                                 "Never push straight to master without a review."])
+
+    def test_numbered_bullets_count(self):
+        self.assertEqual(extract_rules("1. Always answer in plain english, no filler."),
+                         ["Always answer in plain english, no filler."])
+
+    def test_an_overlong_bullet_is_not_a_rule(self):
+        self.assertEqual(extract_rules("- Always " + "word " * 60), [])
+
+    def test_each_file_is_imported_once(self):
+        path = self._write("SOUL.md", "- Always answer in plain english.\n"
+                                      "- Never invent file paths you did not read.\n")
+        first = import_standing(self.store, [path])
+        self.assertEqual(first, {"imported": 2, "files": 1})
+        self.assertEqual(import_standing(self.store, [path]), {"imported": 0, "files": 0})
+        self.assertEqual(len(self.store.rules()), 2)
+
+    def test_a_changed_file_is_read_again(self):
+        path = self._write("SOUL.md", "- Always answer in plain english.\n")
+        import_standing(self.store, [path])
+        self._write("SOUL.md", "- Always answer in plain english.\n"
+                               "- Never invent file paths you did not read.\n")
+        os.utime(path, (path.stat().st_atime, path.stat().st_mtime + 5))
+        self.assertEqual(import_standing(self.store, [path]), {"imported": 1, "files": 1})
+        self.assertEqual(len(self.store.rules()), 2)
+
+    def test_a_forced_rescan_does_not_duplicate_or_inflate(self):
+        path = self._write("AGENTS.md", "- Always answer in plain english.\n")
+        import_standing(self.store, [path])
+        self.assertEqual(import_standing(self.store, [path], force=True),
+                         {"imported": 0, "files": 1})
+        rule = self.store.rules()[0]
+        self.assertEqual(rule["hits"], 1)
+
+    def test_an_import_that_repeats_a_stated_rule_adds_nothing(self):
+        self.store.add("always answer in plain english and never hedge")
+        path = self._write("SOUL.md", "- Always answer in plain english, never hedge your words.\n")
+        self.assertEqual(import_standing(self.store, [path])["imported"], 0)
+        rule = self.store.rules()[0]
+        self.assertEqual(len(self.store.rules()), 1)
+        self.assertEqual(rule["hits"], 1)
+        self.assertEqual(rule["provenance"], "user_stated")
+
+    def test_a_missing_file_is_skipped_quietly(self):
+        self.assertEqual(import_standing(self.store, [self.root / "nope.md"]),
+                         {"imported": 0, "files": 0})
 
 
 if __name__ == "__main__":

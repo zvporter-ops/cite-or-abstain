@@ -441,13 +441,69 @@ class TestCorrectionLedger(HookTestCase):
         self.assertEqual(PLUGIN._rules_store().rules(), [])
 
     def test_the_rules_command_reports_an_empty_store(self):
-        self.assertIn("No rules captured yet", PLUGIN._cmd_rules(""))
+        self.assertIn("No standing rules yet", PLUGIN._cmd_rules(""))
 
     def test_the_rules_command_promotes(self):
         self.pre(self.CORRECTION)
         self.post("Understood.")
         self.assertIn("hard", PLUGIN._cmd_rules("hard 1").lower())
         self.assertTrue(PLUGIN._rules_store().rules()[0]["hard"])
+
+
+class TestStandingImport(HookTestCase):
+    """A cold start is not an empty start: rules the user already wrote are read in first."""
+
+    SOUL = ("# Conventions\n\n"
+            "- Always answer in plain english, no filler.\n"
+            "- Never invent file paths you did not read.\n")
+
+    def setUp(self):
+        super().setUp()
+        PLUGIN._RULES = None
+        PLUGIN._LAST_MSG.clear()
+        PLUGIN._TURN.clear()
+        PLUGIN._TURN_DONE.clear()
+        self.home.mkdir(parents=True, exist_ok=True)
+        (self.home / "SOUL.md").write_text(self.SOUL, encoding="utf-8")
+
+    def tearDown(self):
+        PLUGIN._RULES = None
+        PLUGIN._LAST_MSG.clear()
+        PLUGIN._TURN.clear()
+        PLUGIN._TURN_DONE.clear()
+        super().tearDown()
+
+    def test_standing_files_seed_the_very_first_turn(self):
+        result = self.pre("thanks, that worked")  # a non-question still gets the rules
+        self.assertIn("STANDING RULES", result["context"])
+        self.assertIn("[imported]", result["context"])
+        self.assertIn("plain english", result["context"])
+        self.assertEqual(len(PLUGIN._rules_store().rules()), 2)
+
+    def test_import_can_be_turned_off(self):
+        PLUGIN._CTX.set_config("rules_import", False)
+        self.assertIsNone(self.pre("thanks, that worked"))
+        self.assertEqual(PLUGIN._rules_store().rules(), [])
+
+    def test_the_import_command_picks_up_a_new_bullet(self):
+        self.pre("thanks, that worked")
+        (self.home / "SOUL.md").write_text(
+            self.SOUL + "- Use the vault copy instead of re-fetching.\n", encoding="utf-8")
+        self.assertIn("1 new rule", PLUGIN._cmd_rules("import"))
+        self.assertEqual(len(PLUGIN._rules_store().rules()), 3)
+
+    def test_the_user_restating_an_imported_rule_hardens_and_relabels_it(self):
+        self.pre("no, always answer in plain english and keep it short")
+        self.post("Understood.")
+        rule = [r for r in PLUGIN._rules_store().rules()
+                if "plain english" in r["text"]][0]
+        self.assertEqual(rule["provenance"], "user_stated")
+        self.assertTrue(rule["hard"])
+        self.assertIn("keep it short", rule["text"])
+
+    def test_the_listing_marks_imported_rules(self):
+        self.pre("thanks, that worked")
+        self.assertIn("[imported]", PLUGIN._cmd_rules(""))
 
 
 if __name__ == "__main__":

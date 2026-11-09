@@ -65,6 +65,37 @@ because a false positive injects an instruction the user never gave.
 `/rules` lists what has been captured, `/rules forget <id>` drops one, `/rules hard <id>`
 promotes one. `rules_enabled: false` turns the ledger off and leaves only the document gate.
 
+### A cold start is not an empty start
+
+Waiting to be corrected is not memory; it is a slower way to be told the same thing again.
+So the ledger is seeded before the first turn from the files you already keep — `SOUL.md`
+and `AGENTS.md` in your Hermes home, then the same names in the project you are working in
+(`rules_import_files`, at most `rules_import_max` per file, once per file revision).
+
+Only bullets that read as an instruction are taken. Prose is not a rule, and guessing would
+invent one:
+
+```markdown
+- Always answer in plain english, no filler.        -> imported
+- The project is called Falcon.                     -> skipped (a fact, not an instruction)
+```
+
+Every rule carries its provenance, and provenance decides what wins:
+
+| Rank | Provenance | Meaning |
+|---|---|---|
+| 1 | `user_stated` | You said it in a turn; this outranks everything below |
+| 2 | `imported` | A bullet from a file you wrote earlier |
+| 3 | `config` | A deployment default |
+
+Restating an imported rule in a turn promotes it to `user_stated` and **hard**, and the
+fresher wording replaces the old one. A reversal ("always use bullets" after "never use
+bullets") is a new rule, not a restatement: the rule it reverses is suppressed from the
+injected block rather than deleted, so `/rules` still shows both and the history is honest.
+
+`/rules import` rescans the files; `rules_import: false` keeps the ledger purely
+correction-driven.
+
 ## The hierarchy: internal > public > refuse
 
 Every passage carries a tier.

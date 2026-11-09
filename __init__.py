@@ -92,6 +92,10 @@ def _cfg() -> dict:
         "rules_enabled": _CTX.get_config("rules_enabled", True),
         "rules_max_chars": int(_num(_CTX.get_config("rules_max_chars", 1200), 1200)),
         "rule_overlap": _num(_CTX.get_config("rule_overlap", 0.6), 0.6),
+        "rules_import": _CTX.get_config("rules_import", True),
+        "rules_import_files": _CTX.get_config("rules_import_files",
+                                              ["SOUL.md", "AGENTS.md"]) or [],
+        "rules_import_max": int(_num(_CTX.get_config("rules_import_max", 8), 8)),
     }
 
 
@@ -103,12 +107,45 @@ def _num(value, default: float) -> float:
         return float(default)
 
 
-def _rules_enabled() -> bool:
-    """``hermes config set ... rules_enabled false`` writes a YAML boolean, not "false"."""
-    value = _cfg().get("rules_enabled", True)
+def _truthy(value) -> bool:
+    """Config hands back a YAML boolean or the string "false"; both must read the same."""
     if isinstance(value, str):
         return value.strip().lower() not in ("off", "false", "no", "0", "")
     return bool(value)
+
+
+def _rules_enabled() -> bool:
+    return _truthy(_cfg().get("rules_enabled", True))
+
+
+def _standing_paths() -> list[Path]:
+    """Where the user already wrote rules: their Hermes home, and the project they are in."""
+    roots = [_hermes_home(), Path.cwd()]
+    found: list[Path] = []
+    for name in _cfg().get("rules_import_files") or []:
+        candidate = Path(str(name)).expanduser()
+        if candidate.is_absolute():
+            found.append(candidate)
+        else:
+            found.extend(root / candidate for root in roots)
+    return found
+
+
+def _import_standing(store, force: bool = False) -> dict:
+    """Seed the ledger from standing files, so a cold start is not an empty start."""
+    try:
+        if not force and not _truthy(_cfg().get("rules_import", True)):
+            return {"imported": 0, "files": 0}
+        result = rules_mod.import_standing(
+            store, _standing_paths(), limit=int(_cfg().get("rules_import_max", 8)),
+            force=force)
+        if result["imported"]:
+            logger.info("coldstart imported %d standing rule(s) from %d file(s)",
+                        result["imported"], result["files"])
+        return result
+    except Exception as exc:  # an unreadable file must not break a turn
+        logger.debug("coldstart standing-rule import skipped: %s", exc)
+        return {"imported": 0, "files": 0}
 
 
 def _rules_store() -> rules_mod.RuleStore:
@@ -117,6 +154,7 @@ def _rules_store() -> rules_mod.RuleStore:
         if _RULES is None:
             _RULES = rules_mod.RuleStore(_data_dir() / "rules.json",
                                          overlap=_cfg().get("rule_overlap", 0.6))
+            _import_standing(_RULES)
         return _RULES
 
 
@@ -568,23 +606,38 @@ def _cmd_trust(raw_args: str, **kwargs) -> str:
 
 
 def _cmd_rules(raw_args: str, **kwargs) -> str:
-    """List the captured rules, or forget / promote one by id."""
+    """List the standing rules, or forget / promote / re-import them."""
     store = _rules_store()
     args = (raw_args or "").strip().split()
     if not args:
         rules = store.rules()
         if not rules:
-            return ("No rules captured yet. Correct me once and it becomes a rule; state "
+            return ("No standing rules yet. Correct me once and it becomes a rule; state "
                     "the same correction again and it becomes hard and is injected into "
-                    "every turn.")
-        lines = ["Captured rules (hard rules are injected into every turn):"]
+                    "every turn. `/rules import` reads the instruction bullets from "
+                    "SOUL.md and AGENTS.md.")
+        lines = ["Standing rules (ranked user-stated > imported > deployment; hard ones "
+                 "are injected into every turn):"]
         for rule in rules:
-            mark = "[hard] " if rule.get("hard") else ""
-            lines.append(f"  {rule.get('id')}. {mark}{rule.get('text')} "
+            tags = []
+            if rule.get("hard"):
+                tags.append("hard")
+            provenance = str(rule.get("provenance") or "user_stated")
+            if provenance != "user_stated":
+                tags.append(provenance)
+            if rule.get("superseded_by"):
+                tags.append(f"superseded by {rule['superseded_by']}")
+            tag = f"[{', '.join(tags)}] " if tags else ""
+            lines.append(f"  {rule.get('id')}. {tag}{rule.get('text')} "
                          f"(stated {rule.get('hits', 1)}x)")
-        lines.append("Use /rules forget <id> to drop one, /rules hard <id> to promote one.")
+        lines.append("Use /rules forget <id> to drop one, /rules hard <id> to promote one, "
+                     "/rules import to rescan standing files.")
         return "\n".join(lines)
     verb = args[0].lower()
+    if verb in ("import", "rescan"):
+        result = _import_standing(store, force=True)
+        return (f"Rescanned standing files: {result['imported']} new rule(s) "
+                f"from {result['files']} file(s).")
     if verb in ("forget", "drop", "remove"):
         try:
             rule_id = int(args[1])
@@ -599,7 +652,7 @@ def _cmd_rules(raw_args: str, **kwargs) -> str:
             return "Usage: /rules hard <id>"
         return (f"Rule {rule_id} is hard now: it is injected into every turn."
                 if store.set_hard(rule_id) else f"No rule {rule_id}.")
-    return "Usage: /rules | /rules forget <id> | /rules hard <id>"
+    return ("Usage: /rules | /rules forget <id> | /rules hard <id> | /rules import")
 
 
 def register(ctx) -> None:
@@ -631,8 +684,9 @@ def register(ctx) -> None:
     ctx.register_command("trust", _cmd_trust,
                          description="Run the trust battery and score this deployment")
     ctx.register_command("rules", _cmd_rules,
-                         description="List captured standing rules; forget or promote one",
-                         args_hint="[forget|hard <id>]")
+                         description="List standing rules (ranked by provenance); forget, "
+                                     "promote or re-import them",
+                         args_hint="[import|forget <id>|hard <id>]")
 
     skill = Path(__file__).parent / "skills" / "confidence-gated-pipeline" / "SKILL.md"
     if skill.exists():

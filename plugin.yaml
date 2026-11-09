@@ -18,8 +18,9 @@ description: >-
   embeddings, no dependency beyond the standard library, and no model is ever asked to
   grade its own answer. The same discipline covers how the agent behaves: a correction
   becomes a standing rule, stating it again promotes it to hard, and hard rules are
-  injected into every turn so the user does not have to repeat themselves. `/rules` lists
-  them.
+  injected into every turn so the user does not have to repeat themselves. Instruction
+  bullets you already wrote in SOUL.md / AGENTS.md are imported before the first turn and
+  ranked below anything you state in one; `/rules` lists them by provenance.
 requires_hermes: ">=0.22.0"
 provides_tools:
   - corpus_ask
@@ -102,3 +103,20 @@ config_schema:
       Share of the shorter rule's content words two corrections must have in common to
       count as the same rule. Raise it to capture more variants as distinct rules, lower
       it to merge paraphrases sooner.
+  rules_import:
+    type: bool
+    default: true
+    description: >-
+      Seed the ledger from standing files the user already keeps, so a cold start is not
+      an empty start. Imported rules are ranked below anything the user states in a turn.
+  rules_import_files:
+    type: list
+    default: ["SOUL.md", "AGENTS.md"]
+    description: >-
+      Files to read instruction bullets from, resolved against the Hermes home and the
+      current project directory. Absolute paths are used as given. Prose is never
+      imported: only bullets that read as an instruction become rules.
+  rules_import_max:
+    type: int
+    default: 8
+    description: "Most rules taken from any one standing file."
