@@ -6,14 +6,14 @@ Deadline: **Nov 11 2026, 5:00 PM EST**.
 |---|---|---|
 | 1 | Public repo at a 40-char SHA | pending — `scripts/publish.sh` |
 | 2 | `hermes plugins validate` green at that SHA | done locally (16/16) |
-| 3 | Catalog entry `plugin-catalog/cite-or-abstain.yaml` | drafted in `docs/catalog-entry.yaml`; PR opened by `scripts/publish.sh` |
+| 3 | Catalog entry `plugin-catalog/coldstart.yaml` | drafted in `docs/catalog-entry.yaml`; PR opened by `scripts/publish.sh` |
 | 4 | Demo video, under 90s, plugin shown working | script in `docs/demo-script.md`; needs recording |
 | 5 | Post on X tagging @NousResearch | pending |
 | 6 | Submit both links at https://form.typeform.com/to/FwJLvOln | pending |
 
 ## X post draft
 
-> Built Cite or Abstain for the Hermes plugin hackathon: an evidence gate for any local AI
+> Built Coldstart for the Hermes plugin hackathon: an evidence gate for any local AI
 > deployment.
 >
 > Your own material outranks public material, public answers are labelled as public, and

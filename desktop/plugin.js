@@ -1,8 +1,8 @@
-// Cite or Abstain — desktop half.
+// Coldstart — desktop half.
 //
 // Shows what the gate just did, what the corpus is made of, and lets the user change the
 // mode or run the trust battery without leaving the app. Every value comes from the plugin's
-// own backend (/api/plugins/cite-or-abstain/) — the same code the /trust command runs.
+// own backend (/api/plugins/coldstart/) — the same code the /trust command runs.
 
 import { STATUSBAR_AREAS } from '@hermes/plugin-sdk'
 import { jsx, jsxs } from 'react/jsx-runtime'
@@ -38,8 +38,8 @@ function verdictColour(verdict) {
 }
 
 export default {
-  id: 'cite-or-abstain',
-  name: 'Cite or Abstain',
+  id: 'coldstart',
+  name: 'Coldstart',
   defaultEnabled: true,
 
   register(ctx) {

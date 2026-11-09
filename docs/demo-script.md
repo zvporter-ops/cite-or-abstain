@@ -6,10 +6,10 @@ Everything below is real output from this repo's `examples/` corpus; nothing is 
 Set up before recording (not on camera):
 
 ```bash
-cd /Users/zacharyporter/Documents/AI_Dev/github-repos/cite-or-abstain
+cd /Users/zacharyporter/Documents/AI_Dev/github-repos/coldstart
 export PATH="$HOME/.local/bin:$PATH"
-hermes config set plugins.entries.cite-or-abstain.settings.corpus_roots '[]'   # start empty
-hermes plugins disable cite-or-abstain && hermes plugins enable cite-or-abstain
+hermes config set plugins.entries.coldstart.settings.corpus_roots '[]'   # start empty
+hermes plugins disable coldstart && hermes plugins enable coldstart
 ```
 
 ## 0:00–0:12 — the problem, in one breath
@@ -30,11 +30,11 @@ support. *(Beat: it refuses instead of bluffing.)*
 ## 0:25–0:48 — drop in your own material; it takes precedence
 
 ```bash
-hermes config set plugins.entries.cite-or-abstain.settings.corpus_roots \
+hermes config set plugins.entries.coldstart.settings.corpus_roots \
   '[{"path":"examples/internal","tier":"internal"}]'
-hermes config set plugins.entries.cite-or-abstain.settings.public_roots \
+hermes config set plugins.entries.coldstart.settings.public_roots \
   '["examples/public"]'
-hermes plugins disable cite-or-abstain && hermes plugins enable cite-or-abstain
+hermes plugins disable coldstart && hermes plugins enable coldstart
 hermes -z "What is the Project Falcon budget and launch window?"
 ```
 
@@ -63,8 +63,8 @@ Expect: the model computes the 2% contingency ($5,000, $255,000) and the gate fl
 figures that appear in no retrieved passage. *(Beat: arithmetic is not evidence.)*
 
 ```bash
-hermes config set plugins.entries.cite-or-abstain.settings.strictness strict
-hermes plugins disable cite-or-abstain && hermes plugins enable cite-or-abstain
+hermes config set plugins.entries.coldstart.settings.strictness strict
+hermes plugins disable coldstart && hermes plugins enable coldstart
 hermes -z "What is the Project Falcon budget?"
 ```
 
@@ -73,8 +73,8 @@ Expect: a refusal naming the kind of claim, never echoing the fabricated number.
 ## 1:15–1:30 — the score
 
 ```bash
-hermes config set plugins.entries.cite-or-abstain.settings.strictness flag
-hermes plugins disable cite-or-abstain && hermes plugins enable cite-or-abstain
+hermes config set plugins.entries.coldstart.settings.strictness flag
+hermes plugins disable coldstart && hermes plugins enable coldstart
 hermes -z "Call the corpus_audit tool and report the score."
 ```
 
@@ -93,7 +93,7 @@ button. End on the status-bar chip.
 
 ## Caption
 
-> Cite or Abstain — an evidence gate for any AI deployment. Internal material outranks
+> Coldstart — an evidence gate for any AI deployment. Internal material outranks
 > public, public answers are labelled, and nothing unsupported reaches you.
 
 Tag @NousResearch. Under 90 seconds.

@@ -65,5 +65,5 @@ def redaction_notice(count: int, corpus_ask_local: bool = True) -> str:
         return head + ", and that `corpus_ask` answers it locally instead."
     return head + (
         ", and that answering it needs a local endpoint set in the plugin settings "
-        "(`plugins.entries.cite-or-abstain.settings.endpoint`)."
+        "(`plugins.entries.coldstart.settings.endpoint`)."
     )

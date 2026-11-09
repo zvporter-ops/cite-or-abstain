@@ -1,4 +1,4 @@
-# Cite or Abstain — design
+# Coldstart — design
 
 2026-11-04 · Hermes Agent Plugin Hackathon entry
 
@@ -198,7 +198,7 @@ sequenceDiagram
 
 ## 10. Open decisions
 
-1. Repo: new public `cite-or-abstain` with vendored engines (default), vs. `cgp` itself
+1. Repo: new public `coldstart` with vendored engines (default), vs. `cgp` itself
    becoming the plugin repo.
 2. Strictness default: `flag` (default) vs. `strict`.
 3. Audit mode in v1 (default: yes) vs. deferred.

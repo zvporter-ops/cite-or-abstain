@@ -1,6 +1,6 @@
-"""Backend for the Cite or Abstain desktop pane.
+"""Backend for the Coldstart desktop pane.
 
-Mounted at ``/api/plugins/cite-or-abstain/`` by Hermes's dashboard router, so the pane can
+Mounted at ``/api/plugins/coldstart/`` by Hermes's dashboard router, so the pane can
 read the corpus state, flip the gate mode, and run the trust battery without shelling out.
 
 Nothing here is a second implementation: the scorecard is ``coa.audit``, the same module the
@@ -25,7 +25,7 @@ from coa import leakguard  # noqa: E402
 from coa.corpus import CorpusIndex  # noqa: E402
 from coa.llm import endpoint_llm  # noqa: E402
 
-PLUGIN_ID = "cite-or-abstain"
+PLUGIN_ID = "coldstart"
 MODES = ("off", "flag", "strict")
 
 router = APIRouter()

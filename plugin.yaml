@@ -1,9 +1,9 @@
-name: cite-or-abstain
-label: Cite or Abstain
-version: 0.2.1
+name: coldstart
+label: Coldstart
+version: 0.3.0
 manifest_version: 2
 license: MIT
-homepage: https://github.com/zvporter-ops/cite-or-abstain
+homepage: https://github.com/zvporter-ops/coldstart
 tags: [evidence, grounding, abstention, retrieval, local-models, provenance]
 description: >-
   Evidence-gated answering with a provenance hierarchy. Your own material (internal) is

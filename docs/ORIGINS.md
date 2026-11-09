@@ -1,6 +1,6 @@
 # Where this plugin comes from
 
-Cite or Abstain is not a greenfield idea. It is the meeting point of seven small, stdlib-only
+Coldstart is not a greenfield idea. It is the meeting point of seven small, stdlib-only
 tools built over the preceding months, each of which proved one mechanical property that this
 plugin now relies on. They are local repositories, unpublished, so they are named rather than
 linked — the claims below come from their own READMEs, not from memory.

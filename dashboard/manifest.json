@@ -1,6 +1,6 @@
 {
-  "name": "cite-or-abstain",
-  "label": "Cite or Abstain",
+  "name": "coldstart",
+  "label": "Coldstart",
   "version": "0.2.0",
   "description": "Evidence gate status: corpus tiers, last gate outcome, trust score.",
   "icon": "ShieldCheck",

@@ -1,4 +1,4 @@
-"""Cite or Abstain -- evidence-gated answering with a provenance hierarchy.
+"""Coldstart -- evidence-gated answering with a provenance hierarchy.
 
 Two gates and one clearance rule:
 
@@ -55,7 +55,7 @@ def _hermes_home() -> Path:
 
 
 def _data_dir() -> Path:
-    path = _hermes_home() / "plugin-data" / "cite-or-abstain"
+    path = _hermes_home() / "plugin-data" / "coldstart"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -102,7 +102,7 @@ def _index() -> CorpusIndex | None:
         assert _INDEX is not None
         if changed or _INDEX.stats()["passages"] == 0:
             built = _INDEX.build()
-            logger.info("cite-or-abstain indexed %s documents, %s passages (%s), %s removed",
+            logger.info("coldstart indexed %s documents, %s passages (%s), %s removed",
                         built.documents, built.passages, built.by_tier, built.removed)
         return _INDEX
 
@@ -258,7 +258,7 @@ def on_pre_llm_call(session_id: str = "", user_message: str = "", **kwargs):
             f"{block}\n\n{precedence} Cite the passage ids you used."
         )}
     except Exception as exc:  # a broken corpus must not break the turn
-        logger.warning("cite-or-abstain pre_llm_call failed: %s", exc)
+        logger.warning("coldstart pre_llm_call failed: %s", exc)
         return None
 
 
@@ -282,7 +282,7 @@ def on_transform_llm_output(response_text: str = "", session_id: str = "", **kwa
             hint = ("Use `corpus_ask`, which answers it against the local endpoint."
                     if _model_is_local() else
                     "To answer it locally, set a local endpoint in the plugin settings "
-                    "(`plugins.entries.cite-or-abstain.settings.endpoint`); without one, "
+                    "(`plugins.entries.coldstart.settings.endpoint`); without one, "
                     "`corpus_ask` would call this same remote model.")
             return (
                 "I can't answer that here. Internal material matches this question, and "
@@ -306,7 +306,7 @@ def on_transform_llm_output(response_text: str = "", session_id: str = "", **kwa
             return None
         return response_text + render_report(report)
     except Exception as exc:
-        logger.warning("cite-or-abstain transform_llm_output failed: %s", exc)
+        logger.warning("coldstart transform_llm_output failed: %s", exc)
         return None
 
 
@@ -386,7 +386,7 @@ def _trust_report() -> dict:
         return {"error": (
             "internal material is configured and the active model is not local, so the "
             "audit would send private passages to it. Set a local endpoint in the plugin "
-            "settings (`plugins.entries.cite-or-abstain.settings.endpoint`) and run the "
+            "settings (`plugins.entries.coldstart.settings.endpoint`) and run the "
             "audit again."
         )}
     return audit_mod.run_audit(
@@ -476,13 +476,13 @@ def register(ctx) -> None:
 
     available = lambda: bool(_sources())  # noqa: E731
 
-    ctx.register_tool("corpus_ask", "cite_or_abstain", CORPUS_ASK_SCHEMA,
+    ctx.register_tool("corpus_ask", "coldstart", CORPUS_ASK_SCHEMA,
                       _tool_corpus_ask, check_fn=available,
                       description="Answer from the corpus, internal tier first.")
-    ctx.register_tool("evidence_report", "cite_or_abstain", EVIDENCE_REPORT_SCHEMA,
+    ctx.register_tool("evidence_report", "coldstart", EVIDENCE_REPORT_SCHEMA,
                       _tool_evidence_report, check_fn=available,
                       description="Verify a reply against retrieved evidence.")
-    ctx.register_tool("corpus_audit", "cite_or_abstain", AUDIT_SCHEMA,
+    ctx.register_tool("corpus_audit", "coldstart", AUDIT_SCHEMA,
                       lambda args, **kw: json.dumps(_trust_report()),
                       check_fn=available,
                       description="Score the deployment's trustworthiness.")

@@ -1,6 +1,6 @@
-# Cite or Abstain
+# Coldstart
 
-**An evidence gate for any AI deployment, on day one.**
+**An evidence gate that works from cold start.**
 
 Point Hermes at a folder of your own material and every answer either comes from it or is
 refused. Point it at nothing and it says so instead of inventing an answer. Add public
@@ -93,7 +93,7 @@ measurement of this deployment, not a claim about the plugin in general.
 ## Install
 
 ```bash
-hermes plugins install zvporter-ops/cite-or-abstain --enable
+hermes plugins install zvporter-ops/coldstart --enable
 ```
 
 Then point it at your material:
@@ -101,7 +101,7 @@ Then point it at your material:
 ```yaml
 plugins:
   entries:
-    cite-or-abstain:
+    coldstart:
       settings:
         corpus_roots:      # internal, outranks everything
           - ~/Documents/contracts
@@ -128,7 +128,7 @@ binaries and unsupported formats are skipped rather than guessed at.
 ## Desktop pane
 
 The same repo ships both halves. Hermes Desktop gets an **evidence** pane and a status-bar
-chip, backed by `dashboard/plugin_api.py` at `/api/plugins/cite-or-abstain/`:
+chip, backed by `dashboard/plugin_api.py` at `/api/plugins/coldstart/`:
 
 - corpus composition by tier, and whether the current model is local or remote;
 - the last gated reply — clean, or the unsupported claims by kind, plus internal coverage;
@@ -155,7 +155,7 @@ the number in the terminal cannot drift apart.
 ## Privacy and side effects
 
 - Reads only the directories you configure, plus its own index in
-  `$HERMES_HOME/plugin-data/cite-or-abstain/`.
+  `$HERMES_HOME/plugin-data/coldstart/`.
 - Makes model calls only through Hermes's configured model, or the OpenAI-compatible
   `endpoint` you set yourself.
 - No telemetry, no network calls beyond those, no self-update, no credential files.
